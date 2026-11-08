@@ -36,8 +36,10 @@ class MainActivity : Activity() {
     private lateinit var mic: Button
     private lateinit var invertBtn: Button
     private lateinit var motionBtn: Button
+    private lateinit var recordBtn: Button
 
     private var previewAttached = false
+    private var askedStorage = false
     private var visible = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,6 +57,7 @@ class MainActivity : Activity() {
         mic = findViewById(R.id.mic)
         invertBtn = findViewById(R.id.invert)
         motionBtn = findViewById(R.id.motion)
+        recordBtn = findViewById(R.id.record)
 
         val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
         code.setText(prefs.getString("code", ""))
@@ -71,6 +74,7 @@ class MainActivity : Activity() {
         mic.setOnClickListener { StreamService.current?.toggleMic() }
         invertBtn.setOnClickListener { StreamService.current?.toggleInvert() }
         motionBtn.setOnClickListener { StreamService.current?.cycleMotion() }
+        recordBtn.setOnClickListener { StreamService.current?.toggleRecord() }
         findViewById<Button>(R.id.openWeb).setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
         }
@@ -98,6 +102,11 @@ class MainActivity : Activity() {
         RoomCode.problem(c)?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show(); return }
         getSharedPreferences("bakctv", MODE_PRIVATE).edit().putString("code", c).apply()
         if (!hasMediaPermissions()) { askPermissions(); return }
+        if (Build.VERSION.SDK_INT <= 28 && !askedStorage &&
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            askedStorage = true
+            askPermissions(); return
+        }
         ContextCompat.startForegroundService(
             this, Intent(this, StreamService::class.java).putExtra(StreamService.EXTRA_CODE, c)
         )
@@ -125,12 +134,16 @@ class MainActivity : Activity() {
             else -> "대기 중"
         }
         motionBtn.isEnabled = running
-        motionBtn.text = "👁 움직임 감지: " + MotionDetector.LABELS[s.motionLevel.coerceIn(0, 3)]
+        motionBtn.text = "👁 감지: " + MotionDetector.LABELS[s.motionLevel.coerceIn(0, 3)]
+        recordBtn.isEnabled = running
+        recordBtn.text = if (s.recordOn) "📼 자동 녹화: 켜짐" else "📼 자동 녹화: 꺼짐"
         detail.text = if (!running) "" else buildString {
             append("시청 ${s.viewers}명")
+            if (s.recording) append("   ● 녹화 중")
             if (s.motionActive) append("   ⚠ 움직임 감지 중!")
             else if (s.lastMotionAt > 0) append("   마지막 감지 " +
                 java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.KOREA).format(java.util.Date(s.lastMotionAt)))
+            if (!s.recording && s.lastSaved != null) append("\n저장됨: 갤러리 > 박CTV > ${s.lastSaved}")
         }
         detail.setTextColor(if (s.motionActive) 0xFFFF6B6B.toInt() else 0xFFCCCCCC.toInt())
         talkBadge.visibility = if (s.talking) View.VISIBLE else View.GONE
@@ -175,6 +188,8 @@ class MainActivity : Activity() {
     private fun askPermissions() {
         val perms = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
+        // 안드로이드 9 이하(갤럭시 S8): 녹화 영상을 갤러리에 저장하려면 필요
+        if (Build.VERSION.SDK_INT <= 28) perms += Manifest.permission.WRITE_EXTERNAL_STORAGE
         requestPermissions(perms.toTypedArray(), REQ_PERMS)
     }
 

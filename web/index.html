@@ -469,7 +469,7 @@ async function startViewer() {
     $('remoteVideo').srcObject = null;
     $('remoteAudio').srcObject = null;
     stopMeter('view');
-    hideMotion(); motionLabel = null; updateMotionInfo();
+    hideMotion(); motionLabel = null; recOn = false; updateMotionInfo();
     setViewStatus('대기 중', '', msg);
     clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, 3000);
@@ -543,7 +543,7 @@ function stopTalk() {
 /* ---------------- 움직임 알림 (보는 쪽) ---------------- */
 let alertsOn = true;
 try { alertsOn = localStorage.getItem('fcam-alerts') !== '0'; } catch (e) {}
-let motionLabel = null, lastMotionAt = 0, lastBox = null;
+let motionLabel = null, lastMotionAt = 0, lastBox = null, recOn = false;
 const fmtTime = (t) => new Date(t).toLocaleTimeString('ko-KR', { hour12: false });
 
 function handleCamData(d) {
@@ -553,8 +553,12 @@ function handleCamData(d) {
     if (typeof m === 'string') m = JSON.parse(m);
   } catch (e) { return; }
   if (!m || typeof m !== 'object') return;
-  if (m.t === 'hello') {
+  if (m.t === 'rec') {
+    recOn = !!m.on;
+    updateMotionInfo();
+  } else if (m.t === 'hello') {
     motionLabel = m.label || null;
+    recOn = !!m.rec;
     if (!m.active) hideMotion();
     updateMotionInfo();
   } else if (m.t === 'motion') {
@@ -598,8 +602,8 @@ function positionBox() {
 window.addEventListener('resize', positionBox);
 
 function updateMotionInfo() {
-  let t = '';
-  if (motionLabel) t = '👁 ' + motionLabel;
+  let t = recOn ? '🔴 녹화 중 · ' : '';
+  if (motionLabel) t += '👁 ' + motionLabel;
   if (lastMotionAt) t += (t ? ' · ' : '') + '마지막 ' + fmtTime(lastMotionAt);
   $('motionInfo').textContent = t;
 }

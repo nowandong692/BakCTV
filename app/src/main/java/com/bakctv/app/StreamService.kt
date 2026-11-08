@@ -63,6 +63,9 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         val motionLevel: Int = 2,
         val motionActive: Boolean = false,
         val lastMotionAt: Long = 0L,
+        val recordOn: Boolean = true,
+        val recording: Boolean = false,
+        val lastSaved: String? = null,
     )
 
     /** 연결 하나 (데이터 연결 또는 영상/말하기 연결) */
@@ -101,6 +104,10 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private val detector = MotionDetector { e -> onMotion(e) }
     private var motionActive = false
     private var lastMotionAt = 0L
+    private var recorder: MotionRecorder? = null
+    private var recordOn = true
+    private var recording = false
+    private var lastSaved: String? = null
     private var front = false
     private var micOn = true
     private var lastText = "준비 중…"
@@ -160,7 +167,12 @@ class StreamService : Service(), PeerJsSignaling.Listener {
                 factoryInitialized = true
             }
             val egl = EglBase.create().also { eglBase = it }
+            val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
+            recordOn = prefs.getBoolean("record", true)
+            val rec = MotionRecorder(applicationContext, egl.eglBaseContext) { r, saved -> onRecordChanged(r, saved) }
+            recorder = rec
             val adm = JavaAudioDeviceModule.builder(applicationContext)
+                .setSamplesReadyCallback { samples -> rec.onAudio(samples) }   // 녹화용 소리
                 .setUseHardwareAcousticEchoCanceler(true)
                 .setUseHardwareNoiseSuppressor(true)
                 .createAudioDeviceModule()
@@ -194,6 +206,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             videoTrack = vt
             detector.sensitivity = getSharedPreferences("bakctv", MODE_PRIVATE).getInt("motion", 2)
             vt.addSink(detector)
+            vt.addSink(rec)
+            updateRecorderActive()
 
             // 마이크
             val ac = MediaConstraints().apply {
@@ -226,6 +240,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         conns.values.toList().forEach { closeConn(it.id) }
         val vt = videoTrack
         try { vt?.removeSink(detector) } catch (_: Exception) { }
+        recorder?.let { r -> try { vt?.removeSink(r) } catch (_: Exception) { }; r.release() }
+        recorder = null
         main.post { previewSinks.forEach { s -> try { vt?.removeSink(s) } catch (_: Exception) { } } }
         try { capturer?.stopCapture() } catch (_: Exception) { }
         capturer?.dispose(); capturer = null
@@ -438,7 +454,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             lastText = if (viewers == 0) "촬영 중 · 시청 대기" else "촬영 중"
         }
         publish(Status(true, lastText, viewers, talking, front, micOn, invert.enabled,
-            detector.sensitivity, motionActive, lastMotionAt))
+            detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved))
     }
 
     // ---------------------------------------------------------------- 조작 (화면에서 호출)
@@ -462,6 +478,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         detector.sensitivity = next
         getSharedPreferences("bakctv", MODE_PRIVATE).edit().putInt("motion", next).apply()
         if (next == 0) motionActive = false
+        updateRecorderActive()
         broadcast(helloJson())
         updateCounts()
     }
@@ -469,6 +486,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     // ---------------------------------------------------------------- 움직임 알림
 
     private fun onMotion(e: MotionDetector.Event) = post {
+        if (e.start || !e.on) recorder?.onMotion(e.on)
         motionActive = e.on
         val msg = JSONObject().put("t", "motion").put("on", e.on).put("start", e.start)
         if (e.start) {
@@ -486,6 +504,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         .put("motion", detector.sensitivity)
         .put("label", MotionDetector.LABELS[detector.sensitivity])
         .put("active", motionActive)
+        .put("rec", recording)
 
     private fun broadcast(msg: JSONObject) {
         conns.values.mapNotNull { it.dc }.forEach { sendTo(it, msg) }
@@ -498,6 +517,27 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             val bytes = msg.toString().toByteArray(Charsets.UTF_8)
             dc.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(bytes), true))
         } catch (_: Exception) { }
+    }
+
+    // ---------------------------------------------------------------- 자동 녹화
+
+    fun toggleRecord() = post {
+        recordOn = !recordOn
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putBoolean("record", recordOn).apply()
+        updateRecorderActive()
+        updateCounts()
+    }
+
+    /** 녹화기는 '자동 녹화 켜짐 + 움직임 감지 켜짐' 일 때만 동작 (S8 부담 줄이기) */
+    private fun updateRecorderActive() {
+        recorder?.setActive(recordOn && detector.sensitivity > 0)
+    }
+
+    private fun onRecordChanged(rec: Boolean, saved: String?) = post {
+        recording = rec
+        if (saved != null) lastSaved = saved
+        broadcast(JSONObject().put("t", "rec").put("on", rec).apply { if (saved != null) put("saved", saved) })
+        updateCounts()
     }
 
     fun toggleInvert() = post {
@@ -538,7 +578,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private fun setStatus(text: String) {
         lastText = text
         publish(Status(true, text, 0, false, front, micOn, invert.enabled,
-            detector.sensitivity, motionActive, lastMotionAt))
+            detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved))
     }
 
     private fun publish(s: Status) {
