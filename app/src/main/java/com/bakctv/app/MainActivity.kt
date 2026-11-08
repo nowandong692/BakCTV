@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private lateinit var startStop: Button
     private lateinit var flip: Button
     private lateinit var mic: Button
+    private lateinit var invertBtn: Button
 
     private var previewAttached = false
     private var visible = false
@@ -51,6 +52,7 @@ class MainActivity : Activity() {
         startStop = findViewById(R.id.startStop)
         flip = findViewById(R.id.flip)
         mic = findViewById(R.id.mic)
+        invertBtn = findViewById(R.id.invert)
 
         val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
         code.setText(prefs.getString("code", ""))
@@ -65,6 +67,7 @@ class MainActivity : Activity() {
         }
         flip.setOnClickListener { StreamService.current?.switchCamera() }
         mic.setOnClickListener { StreamService.current?.toggleMic() }
+        invertBtn.setOnClickListener { StreamService.current?.toggleInvert() }
         findViewById<Button>(R.id.openWeb).setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
         }
@@ -109,6 +112,8 @@ class MainActivity : Activity() {
         code.isEnabled = !running
         flip.isEnabled = running
         mic.isEnabled = running
+        invertBtn.isEnabled = running
+        invertBtn.text = if (s.inverted) "🎨 반전 켜짐" else "🎨 색상 반전"
         startStop.text = if (running) "■ 촬영 종료" else "이 기기로 촬영하기"
         mic.text = if (s.micOn) "🎤 소리 켜짐" else "🔇 소리 꺼짐"
         status.text = when {

@@ -59,6 +59,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         val talking: Boolean = false,
         val frontCamera: Boolean = false,
         val micOn: Boolean = true,
+        val inverted: Boolean = false,
     )
 
     /** 연결 하나 (데이터 연결 또는 영상/말하기 연결) */
@@ -92,6 +93,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private val conns = mutableMapOf<String, Conn>()
     private val orphanCandidates = mutableMapOf<String, MutableList<IceCandidate>>()
 
+    private val invert = InvertProcessor()
     private var front = false
     private var micOn = true
     private var lastText = "준비 중…"
@@ -177,6 +179,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             textureHelper = helper
             val vSrc = f.createVideoSource(false)
             videoSource = vSrc
+            invert.enabled = getSharedPreferences("bakctv", MODE_PRIVATE).getBoolean("invert", false)
+            vSrc.setVideoProcessor(invert)
             cap.initialize(helper, applicationContext, vSrc.capturerObserver)
             cap.startCapture(1280, 720, 30)
             videoTrack = f.createVideoTrack("v0", vSrc)
@@ -419,7 +423,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         if (signaling != null) {
             lastText = if (viewers == 0) "촬영 중 · 시청 대기" else "촬영 중"
         }
-        publish(Status(true, lastText, viewers, talking, front, micOn))
+        publish(Status(true, lastText, viewers, talking, front, micOn, invert.enabled))
     }
 
     // ---------------------------------------------------------------- 조작 (화면에서 호출)
@@ -434,6 +438,12 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     fun toggleMic() = post {
         micOn = !micOn
         audioTrack?.setEnabled(micOn)
+        updateCounts()
+    }
+
+    fun toggleInvert() = post {
+        invert.enabled = !invert.enabled
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putBoolean("invert", invert.enabled).apply()
         updateCounts()
     }
 
@@ -468,7 +478,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
 
     private fun setStatus(text: String) {
         lastText = text
-        publish(Status(true, text, 0, false, front, micOn))
+        publish(Status(true, text, 0, false, front, micOn, invert.enabled))
     }
 
     private fun publish(s: Status) {
