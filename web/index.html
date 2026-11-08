@@ -58,6 +58,7 @@
   .ctrl.danger { background: #e5484dcc; }
   .ctrl.on { background: #30a46c; }
   video.invert { filter: invert(1); }
+  .proc-src { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
   #cover { display: none; position: fixed; inset: 0; z-index: 100; background: #000;
     align-items: center; justify-content: center; text-align: center;
     touch-action: manipulation; user-select: none; -webkit-user-select: none; }
@@ -89,6 +90,7 @@
 <div id="camScreen" class="screen">
   <div class="stage">
     <video id="localVideo" autoplay playsinline muted></video>
+    <video id="procSrc" class="proc-src" autoplay playsinline muted></video>
     <div class="topbar">
       <div class="status"><span class="dot" id="camDot"></span><span id="camStatus">준비 중…</span><span class="meter" id="camMeter"></span></div>
       <span id="viewerCount">시청 0명</span>
@@ -98,6 +100,7 @@
     <div id="talkAudio"></div>
     <div class="controls">
       <button class="ctrl" id="flipBtn">🔄 카메라 전환</button>
+      <button class="ctrl" id="camInvertBtn">🎨 색상 반전</button>
       <button class="ctrl" id="micBtn">🎤 소리 켜짐</button>
       <button class="ctrl" id="coverBtn">🌙 화면 가리기</button>
       <button class="ctrl danger" id="stopCam">■ 종료</button>
@@ -241,7 +244,9 @@ async function startCamera() {
     alert('카메라를 켤 수 없습니다. 브라우저에서 카메라·마이크 권한을 허용해 주세요.\n(HTTPS 주소에서만 동작합니다)');
     return stopAll();
   }
-  $('localVideo').srcObject = localStream;
+  if (camInvertOn) startInvertPipeline();
+  applyOutVideo();
+  updateCamInvertBtn();
   startMeter(localStream, $('camMeter'), 'cam');
   keepAwake();
 
@@ -251,7 +256,7 @@ async function startCamera() {
   // 시청자가 접속하면 → 영상을 보내준다
   peer.on('connection', (conn) => {
     conn.on('open', () => {
-      const call = peer.call(conn.peer, localStream);
+      const call = peer.call(conn.peer, outStream());
       calls.add(call); updateViewerCount();
       const drop = () => { calls.delete(call); updateViewerCount(); };
       call.on('close', drop); call.on('error', drop);
@@ -323,15 +328,71 @@ async function flipCamera() {
   }
   if (newTrack) {
     localStream.addTrack(newTrack);
-    calls.forEach(call => {
-      const sender = call.peerConnection?.getSenders().find(s => s.track ? s.track.kind === 'video' : false);
-      if (sender) sender.replaceTrack(newTrack).catch(() => {});
-    });
-    const v = $('localVideo');
-    v.srcObject = null; v.srcObject = localStream;
-    v.style.transform = facing === 'user' ? 'scaleX(-1)' : '';  // 전면은 거울처럼
+    if (procTrack) { const ps = $('procSrc'); ps.srcObject = null; ps.srcObject = localStream; ps.play().catch(() => {}); }
+    applyOutVideo();
+    $('localVideo').style.transform = facing === 'user' ? 'scaleX(-1)' : '';  // 전면은 거울처럼
   }
   btn.disabled = false;
+}
+
+/* ---- 촬영 쪽 색상 반전: 캔버스로 반전한 영상을 대신 보낸다 ---- */
+let camInvertOn = false;
+try { camInvertOn = localStorage.getItem('fcam-cam-invert') === '1'; } catch (e) {}
+let procTrack = null;
+
+function startInvertPipeline() {
+  if (procTrack || !localStream) return;
+  const v = $('procSrc');
+  v.srcObject = localStream; v.play().catch(() => {});
+  const c = document.createElement('canvas');
+  c.width = 1280; c.height = 720;
+  const ctx = c.getContext('2d');
+  const draw = () => {
+    if (!procTrack) return;
+    if (v.videoWidth) {
+      if (c.width !== v.videoWidth || c.height !== v.videoHeight) { c.width = v.videoWidth; c.height = v.videoHeight; }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+      ctx.globalCompositeOperation = 'difference';   // 흰색과의 차이 = 색상 반전
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+    }
+    next();
+  };
+  const next = () => (v.requestVideoFrameCallback ? v.requestVideoFrameCallback(draw) : requestAnimationFrame(draw));
+  procTrack = c.captureStream(30).getVideoTracks()[0];
+  next();
+}
+function stopInvertPipeline() {
+  if (procTrack) { procTrack.stop(); procTrack = null; }
+  $('procSrc').srcObject = null;
+}
+function outVideoTrack() {
+  return (camInvertOn && procTrack) ? procTrack : localStream.getVideoTracks()[0];
+}
+function outStream() {
+  return new MediaStream([outVideoTrack(), ...localStream.getAudioTracks()]);
+}
+// 보내는 영상과 미리보기를 현재 설정에 맞게 바꿈
+function applyOutVideo() {
+  if (!localStream) return;
+  const t = outVideoTrack();
+  calls.forEach(call => {
+    const sender = call.peerConnection?.getSenders().find(s => s.track ? s.track.kind === 'video' : false);
+    if (sender) sender.replaceTrack(t).catch(() => {});
+  });
+  $('localVideo').srcObject = new MediaStream([t]);
+}
+function updateCamInvertBtn() {
+  $('camInvertBtn').textContent = camInvertOn ? '🎨 반전 켜짐' : '🎨 색상 반전';
+  $('camInvertBtn').classList.toggle('on', camInvertOn);
+}
+function toggleCamInvert() {
+  camInvertOn = !camInvertOn;
+  try { localStorage.setItem('fcam-cam-invert', camInvertOn ? '1' : '0'); } catch (e) {}
+  if (camInvertOn) startInvertPipeline(); else stopInvertPipeline();
+  applyOutVideo();
+  updateCamInvertBtn();
 }
 
 function toggleMic() {
@@ -475,6 +536,7 @@ function stopAll() {
   $('talkAudio').innerHTML = ''; $('talkBadge').style.display = 'none';
   calls.forEach(c => c.close()); calls.clear(); updateViewerCount();
   if (peer) { peer.destroy(); peer = null; }
+  stopInvertPipeline();
   if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   $('localVideo').srcObject = null;
@@ -489,6 +551,7 @@ function stopAll() {
 $('startCam').onclick = startCamera;
 $('startView').onclick = startViewer;
 $('flipBtn').onclick = flipCamera;
+$('camInvertBtn').onclick = toggleCamInvert;
 $('micBtn').onclick = toggleMic;
 $('stopCam').onclick = stopAll;
 $('soundBtn').onclick = toggleSound;
