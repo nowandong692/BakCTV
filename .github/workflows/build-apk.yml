@@ -22,9 +22,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+      - uses: gradle/actions/setup-gradle@v4   # 캐시용
+
+      # Gradle 서버가 일시적으로 504 등 오류를 내도 자동 재시도
+      - name: Gradle 8.9 설치
+        run: |
+          curl -fsSL --retry 8 --retry-delay 15 --retry-all-errors \
+            -o "$RUNNER_TEMP/gradle.zip" https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
+
+      - name: Gradle 버전 확인
+        run: gradle --version
 
       - name: 서명 키 준비
         env:
