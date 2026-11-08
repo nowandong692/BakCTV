@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">박CTV</string>
+    <!-- 박CTV 웹 주소. Netlify 주소가 바뀌면 여기만 고치면 됩니다. -->
+    <string name="app_url" translatable="false">https://phenomenal-banoffee-e889e5.netlify.app/</string>
+</resources>

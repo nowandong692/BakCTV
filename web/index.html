@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>박CTV</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#111111">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="박CTV">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #111; color: #eee;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  .screen { display: none; height: 100%; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* 시작 화면 */
+  #home { justify-content: center; align-items: center; padding: 24px; gap: 16px; }
+  #home h1 { font-size: 28px; margin-bottom: 8px; }
+  #home p.hint { color: #999; font-size: 14px; text-align: center; line-height: 1.5; }
+  input { width: 100%; max-width: 320px; padding: 14px; font-size: 18px; border-radius: 12px;
+    border: 1px solid #444; background: #222; color: #fff; text-align: center; }
+  .btn { width: 100%; max-width: 320px; padding: 16px; font-size: 18px; font-weight: 600;
+    border: none; border-radius: 12px; cursor: pointer; color: #fff; }
+  .btn.cam { background: #e5484d; }
+  .btn.view { background: #3e63dd; }
+  .btn:disabled { opacity: .5; }
+  .btn.install { background: #30a46c; display: none; }
+  .code-check { min-height: 20px; font-size: 14px; margin-top: -8px; }
+  .code-check.ok { color: #30a46c; }
+  .code-check.bad { color: #f2a33a; }
+  #iosHint { display: none; background: #222; border: 1px solid #444; border-radius: 12px;
+    padding: 12px 14px; max-width: 320px; font-size: 14px; line-height: 1.5; color: #ccc; text-align: center; }
+
+  /* 영상 화면 */
+  .stage { position: relative; flex: 1; background: #000; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .topbar { position: absolute; top: 0; left: 0; right: 0; padding: 12px 14px;
+    padding-top: max(12px, env(safe-area-inset-top));
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(#000a, #0000); font-size: 15px; }
+  .status { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #888; }
+  .dot.live { background: #e5484d; animation: blink 1.2s infinite; }
+  .dot.ok { background: #30a46c; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .controls { position: absolute; bottom: 0; left: 0; right: 0; padding: 16px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;
+    background: linear-gradient(#0000, #000a); }
+  .ctrl { padding: 12px 18px; font-size: 15px; border-radius: 24px; border: none;
+    background: #fff2; color: #fff; backdrop-filter: blur(8px); cursor: pointer; }
+  .ctrl.danger { background: #e5484dcc; }
+  .ctrl.on { background: #30a46c; }
+  #cover { display: none; position: fixed; inset: 0; z-index: 100; background: #000;
+    align-items: center; justify-content: center; text-align: center;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  #cover.show { display: flex; }
+  #coverHint { color: #555; font-size: 15px; line-height: 1.7; transition: opacity 1.5s; }
+  #coverHint.fade { opacity: 0; }
+  .meter { font-size: 13px; letter-spacing: -1px; color: #7ee2a8; margin-left: 6px; }
+  .talk-badge { display: none; position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    background: #30a46ce6; padding: 10px 18px; border-radius: 20px; font-size: 16px; font-weight: 600; }
+  .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 24px; color: #aaa; font-size: 16px; line-height: 1.6; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<!-- 시작 화면 -->
+<div id="home" class="screen active">
+  <h1>박CTV</h1>
+  <input id="code" type="text" placeholder="방 코드 (예: 박씨네거실-별빛3829)" autocomplete="off">
+  <div id="codeCheck" class="code-check"></div>
+  <button class="btn cam" id="startCam">이 기기로 촬영하기</button>
+  <button class="btn view" id="startView">다른 기기 영상 보기</button>
+  <p class="hint">두 기기에 같은 방 코드를 입력하세요.<br>10자 이상, 글자와 숫자를 섞어 주세요.</p>
+  <button class="btn install" id="installBtn">📲 앱으로 설치하기</button>
+  <div id="iosHint">📲 앱으로 설치하려면<br>Safari 아래쪽 <b>공유 버튼</b> → <b>홈 화면에 추가</b></div>
+</div>
+
+<!-- 촬영 화면 -->
+<div id="camScreen" class="screen">
+  <div class="stage">
+    <video id="localVideo" autoplay playsinline muted></video>
+    <div class="topbar">
+      <div class="status"><span class="dot" id="camDot"></span><span id="camStatus">준비 중…</span><span class="meter" id="camMeter"></span></div>
+      <span id="viewerCount">시청 0명</span>
+    </div>
+    <div id="cover"><span id="coverHint">촬영 중입니다<br>화면을 두 번 누르면 돌아옵니다</span></div>
+    <div id="talkBadge" class="talk-badge">🔊 가족이 말하는 중</div>
+    <div id="talkAudio"></div>
+    <div class="controls">
+      <button class="ctrl" id="flipBtn">🔄 카메라 전환</button>
+      <button class="ctrl" id="micBtn">🎤 소리 켜짐</button>
+      <button class="ctrl" id="coverBtn">🌙 화면 가리기</button>
+      <button class="ctrl danger" id="stopCam">■ 종료</button>
+    </div>
+  </div>
+</div>
+
+<!-- 모니터 화면 -->
+<div id="viewScreen" class="screen">
+  <div class="stage">
+    <video id="remoteVideo" autoplay playsinline muted></video>
+    <audio id="remoteAudio" autoplay playsinline></audio>
+    <div class="msg" id="viewMsg">촬영 기기를 찾는 중…</div>
+    <div class="topbar">
+      <div class="status"><span class="dot" id="viewDot"></span><span id="viewStatus">연결 중…</span><span class="meter" id="viewMeter"></span></div>
+    </div>
+    <div class="controls">
+      <button class="ctrl" id="soundBtn">🔊 소리 끄기</button>
+      <button class="ctrl" id="talkBtn">🎙 말하기</button>
+      <button class="ctrl" id="fullBtn">⛶ 전체화면</button>
+      <button class="ctrl danger" id="stopView">■ 나가기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let peer = null;
+let localStream = null;
+let facing = 'environment';      // 기본: 후면 카메라
+let wakeLock = null;
+let retryTimer = null;
+const calls = new Set();         // 촬영 기기에 연결된 시청자들
+
+// 방 코드 → PeerJS ID (코드를 해시해서 그대로 노출되지 않게)
+// 방 코드 → 연결 ID. 일부러 느린 계산(PBKDF2 20만 회)을 써서
+// 남이 코드를 하나씩 넣어 보며 맞히는 시도를 매우 느리게 만든다.
+async function roomId(code) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(code.trim()), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode('bakctv-room-v2'), iterations: 200000 }, key, 128);
+  const hex = [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return 'bctv-' + hex;
+}
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+
+// 방 코드 규칙 검사: 통과하면 null, 아니면 이유를 돌려줌
+function codeProblem(code) {
+  const chars = [...code];
+  if (chars.length < 10) return `10자 이상 필요해요 (지금 ${chars.length}자)`;
+  if (!/\d/.test(code)) return '숫자를 하나 이상 넣어 주세요';
+  if (!/[^\d\s]/.test(code)) return '숫자만으로는 안 돼요. 글자도 섞어 주세요';
+  if (new Set(chars).size < 6) return '같은 글자가 너무 많이 반복돼요';
+  if (/(0123|1234|2345|3456|4567|5678|6789|abcd|qwer|asdf|password|admin)/i.test(code))
+    return '1234, abcd 같은 쉬운 패턴은 빼 주세요';
+  return null;
+}
+function checkCodeInput() {
+  const code = $('code').value.trim();
+  const problem = code ? codeProblem(code) : '방 코드를 입력하세요';
+  const el = $('codeCheck');
+  el.textContent = problem ? '⚠ ' + problem : '✔ 사용할 수 있는 코드예요';
+  el.className = 'code-check ' + (problem ? 'bad' : 'ok');
+  $('startCam').disabled = $('startView').disabled = !!problem;
+}
+
+function getCode() {
+  const code = $('code').value.trim();
+  const problem = codeProblem(code);
+  if (problem) { alert(problem); return null; }
+  try { localStorage.setItem('fcam-code', code); } catch (e) {}
+  return code;
+}
+
+// 화면 꺼짐 방지
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && peer) keepAwake();
+});
+
+/* ---------------- 소리 막대 ---------------- */
+let audioCtx = null;
+const meters = {};
+function ensureAudioCtx() {   // 버튼을 누른 순간에 호출해야 함 (브라우저 정책)
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!audioCtx && AC) audioCtx = new AC();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+}
+function startMeter(stream, el, key) {
+  stopMeter(key);
+  if (!stream.getAudioTracks().length) { el.textContent = '🎤 소리 없음'; return; }
+  if (!audioCtx) { el.textContent = ''; return; }
+  const src = audioCtx.createMediaStreamSource(stream);
+  const an = audioCtx.createAnalyser(); an.fftSize = 512;
+  src.connect(an);
+  const buf = new Uint8Array(an.fftSize);
+  const timer = setInterval(() => {
+    an.getByteTimeDomainData(buf);
+    let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    const lv = Math.min(5, Math.round(peak / 10));
+    el.textContent = '🎤' + '▮'.repeat(lv) + '▯'.repeat(5 - lv);
+  }, 120);
+  meters[key] = { src, timer, el };
+}
+function stopMeter(key) {
+  const m = meters[key]; if (!m) return;
+  clearInterval(m.timer); try { m.src.disconnect(); } catch (e) {}
+  m.el.textContent = ''; delete meters[key];
+}
+
+/* ---------------- 촬영 기기 ---------------- */
+async function getCamera() {
+  return navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: true
+  });
+}
+
+function setCamStatus(text, cls) {
+  $('camStatus').textContent = text;
+  $('camDot').className = 'dot' + (cls ? ' ' + cls : '');
+}
+function updateViewerCount() { $('viewerCount').textContent = `시청 ${calls.size}명`; }
+
+async function startCamera() {
+  const code = getCode(); if (!code) return;
+  ensureAudioCtx();
+  show('camScreen');
+  setCamStatus('카메라 켜는 중…');
+  try {
+    localStream = await getCamera();
+  } catch (e) {
+    alert('카메라를 켤 수 없습니다. 브라우저에서 카메라·마이크 권한을 허용해 주세요.\n(HTTPS 주소에서만 동작합니다)');
+    return stopAll();
+  }
+  $('localVideo').srcObject = localStream;
+  startMeter(localStream, $('camMeter'), 'cam');
+  keepAwake();
+
+  peer = new Peer(await roomId(code));
+  peer.on('open', () => setCamStatus('촬영 중 · 대기', 'live'));
+
+  // 시청자가 접속하면 → 영상을 보내준다
+  peer.on('connection', (conn) => {
+    conn.on('open', () => {
+      const call = peer.call(conn.peer, localStream);
+      calls.add(call); updateViewerCount();
+      const drop = () => { calls.delete(call); updateViewerCount(); };
+      call.on('close', drop); call.on('error', drop);
+      conn.on('close', () => { call.close(); drop(); });
+    });
+  });
+
+  // 시청자가 "말하기"를 누르면 → 그 목소리를 이 기기 스피커로 재생
+  const talkers = new Set();
+  const updateBadge = () => { $('talkBadge').style.display = talkers.size ? 'block' : 'none'; };
+  peer.on('call', (call) => {
+    call.answer();  // 목소리는 받기만 함
+    const audio = document.createElement('audio');
+    audio.autoplay = true; audio.playsInline = true;
+    $('talkAudio').appendChild(audio);
+    call.on('stream', (s) => {
+      audio.srcObject = s; audio.play().catch(() => {});
+      talkers.add(call); updateBadge();
+    });
+    const end = () => { audio.remove(); talkers.delete(call); updateBadge(); };
+    call.on('close', end); call.on('error', end);
+  });
+
+  peer.on('disconnected', () => { setCamStatus('재연결 중…'); peer.reconnect(); });
+  peer.on('error', (err) => {
+    if (err.type === 'unavailable-id') {
+      alert('이 방 코드로 이미 촬영 중인 기기가 있습니다. 다른 코드를 쓰거나 그 기기를 종료하세요.');
+      stopAll();
+    } else if (err.type === 'network' || err.type === 'server-error') {
+      setCamStatus('네트워크 오류 · 재시도 중…');
+    }
+  });
+}
+
+// 전·후면 카메라 전환 (연결된 시청자 영상도 그대로 교체)
+// 카메라 열기: 방향(전면/후면)으로 먼저 시도, 안 되면 다른 카메라 장치를 직접 선택
+async function openVideo(mode, excludeId) {
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ video: { ...size, facingMode: { exact: mode } } });
+    return st.getVideoTracks()[0];
+  } catch (e) {
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const want = mode === 'user' ? /front|user|전면/i : /back|rear|environment|후면/i;
+    const pick = cams.find(d => want.test(d.label) && d.deviceId !== excludeId)
+              || cams.find(d => d.deviceId !== excludeId);
+    if (!pick) throw e;
+    const st = await navigator.mediaDevices.getUserMedia({ video: { ...size, deviceId: { exact: pick.deviceId } } });
+    return st.getVideoTracks()[0];
+  }
+}
+
+// 전·후면 카메라 전환 (기존 카메라를 먼저 끄고 새 카메라를 켬)
+async function flipCamera() {
+  if (!localStream) return;
+  const btn = $('flipBtn'); btn.disabled = true;
+  const next = facing === 'environment' ? 'user' : 'environment';
+  const oldTrack = localStream.getVideoTracks()[0];
+  const oldId = oldTrack?.getSettings().deviceId;
+  if (oldTrack) { localStream.removeTrack(oldTrack); oldTrack.stop(); }
+
+  let newTrack = null;
+  try {
+    newTrack = await openVideo(next, oldId);
+    facing = next;
+  } catch (e) {
+    alert('카메라를 전환할 수 없습니다. 원래 카메라로 돌아갑니다.');
+    try { newTrack = await openVideo(facing); } catch (e2) {}
+  }
+  if (newTrack) {
+    localStream.addTrack(newTrack);
+    calls.forEach(call => {
+      const sender = call.peerConnection?.getSenders().find(s => s.track ? s.track.kind === 'video' : false);
+      if (sender) sender.replaceTrack(newTrack).catch(() => {});
+    });
+    const v = $('localVideo');
+    v.srcObject = null; v.srcObject = localStream;
+    v.style.transform = facing === 'user' ? 'scaleX(-1)' : '';  // 전면은 거울처럼
+  }
+  btn.disabled = false;
+}
+
+function toggleMic() {
+  const track = localStream?.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  $('micBtn').textContent = track.enabled ? '🎤 소리 켜짐' : '🔇 소리 꺼짐';
+}
+
+// 화면 가리기: 촬영은 계속, 화면만 검게 (두 번 누르면 해제)
+let hintTimer = null, lastTap = 0;
+function showCover() {
+  $('cover').classList.add('show');
+  $('coverHint').classList.remove('fade');
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => $('coverHint').classList.add('fade'), 3000);
+  keepAwake();
+}
+function hideCover() { $('cover').classList.remove('show'); clearTimeout(hintTimer); }
+$('cover').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const now = Date.now();
+  if (now - lastTap < 400) { hideCover(); lastTap = 0; return; }
+  lastTap = now;
+  // 한 번 누르면 안내 문구만 잠깐 다시 보여줌
+  $('coverHint').classList.remove('fade');
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => $('coverHint').classList.add('fade'), 2000);
+});
+
+/* ---------------- 모니터 기기 ---------------- */
+function setViewStatus(text, cls, msg) {
+  $('viewStatus').textContent = text;
+  $('viewDot').className = 'dot' + (cls ? ' ' + cls : '');
+  $('viewMsg').textContent = msg || '';
+  $('viewMsg').style.display = msg ? 'flex' : 'none';
+}
+
+async function startViewer() {
+  const code = getCode(); if (!code) return;
+  ensureAudioCtx();
+  show('viewScreen');
+  keepAwake();
+  const target = await roomId(code);
+  viewTarget = target;
+  peer = new Peer();
+
+  const connect = () => {
+    clearTimeout(retryTimer);
+    if (!peer || peer.destroyed) return;
+    setViewStatus('연결 중…', '', '촬영 기기를 찾는 중…');
+    const conn = peer.connect(target, { reliable: true });
+    conn.on('close', () => scheduleRetry('촬영이 끊겼습니다. 다시 연결하는 중…'));
+  };
+  const scheduleRetry = (msg) => {
+    $('remoteVideo').srcObject = null;
+    $('remoteAudio').srcObject = null;
+    stopMeter('view');
+    setViewStatus('대기 중', '', msg);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, 3000);
+  };
+
+  peer.on('open', connect);
+  peer.on('call', (call) => {
+    call.answer();  // 영상은 받기만 함
+    call.on('stream', (stream) => {
+      $('remoteVideo').srcObject = stream;   // 영상은 video로
+      playRemoteAudio(stream);                // 소리는 별도 audio로
+      startMeter(stream, $('viewMeter'), 'view');
+      setViewStatus('실시간 보는 중', 'ok');
+    });
+    call.on('close', () => scheduleRetry('촬영이 끊겼습니다. 다시 연결하는 중…'));
+  });
+  peer.on('disconnected', () => peer.reconnect());
+  peer.on('error', (err) => {
+    if (err.type === 'peer-unavailable') {
+      scheduleRetry('촬영 중인 기기가 없습니다.\n촬영 기기에서 같은 코드로 시작해 주세요.\n(3초마다 자동으로 다시 찾습니다)');
+    } else if (err.type === 'network' || err.type === 'server-error') {
+      scheduleRetry('네트워크 오류. 다시 시도하는 중…');
+    }
+  });
+}
+
+let soundOn = true;   // 기본: 소리 켜짐
+function updateSoundBtn() { $('soundBtn').textContent = soundOn ? '🔊 소리 끄기' : '🔇 소리 켜기'; }
+function playRemoteAudio(stream) {
+  const a = $('remoteAudio');
+  a.srcObject = stream;
+  a.muted = !soundOn;
+  a.play().catch(() => {          // 브라우저가 자동 재생을 막으면 버튼으로 켜도록
+    soundOn = false; a.muted = true; updateSoundBtn();
+  });
+  updateSoundBtn();
+}
+function toggleSound() {
+  ensureAudioCtx();
+  const a = $('remoteAudio');
+  soundOn = !soundOn;
+  a.muted = !soundOn;
+  a.play().catch(() => {});
+  updateSoundBtn();
+}
+
+// 말하기: 이 기기 마이크 → 촬영 기기 스피커
+let viewTarget = null, talkCall = null, talkStream = null;
+async function toggleTalk() {
+  if (talkCall) return stopTalk();
+  if (!peer || !viewTarget) return;
+  try {
+    talkStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (e) { return alert('마이크를 켤 수 없습니다. 마이크 권한을 허용해 주세요.'); }
+  talkCall = peer.call(viewTarget, talkStream);
+  talkCall.on('close', stopTalk);
+  talkCall.on('error', stopTalk);
+  $('talkBtn').textContent = '🎙 말하는 중 (누르면 끝)';
+  $('talkBtn').classList.add('on');
+}
+function stopTalk() {
+  const c = talkCall; talkCall = null;
+  if (c) c.close();
+  if (talkStream) { talkStream.getTracks().forEach(t => t.stop()); talkStream = null; }
+  $('talkBtn').textContent = '🎙 말하기';
+  $('talkBtn').classList.remove('on');
+}
+
+function toggleFull() {
+  const el = $('remoteVideo');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitEnterFullscreen) el.webkitEnterFullscreen(); // iPhone
+}
+
+/* ---------------- 공통 ---------------- */
+function stopAll() {
+  clearTimeout(retryTimer);
+  stopTalk();
+  hideCover();
+  $('talkAudio').innerHTML = ''; $('talkBadge').style.display = 'none';
+  calls.forEach(c => c.close()); calls.clear(); updateViewerCount();
+  if (peer) { peer.destroy(); peer = null; }
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  $('localVideo').srcObject = null;
+  $('remoteVideo').srcObject = null;
+  $('remoteAudio').srcObject = null;
+  stopMeter('cam'); stopMeter('view');
+  soundOn = true; updateSoundBtn();
+  $('micBtn').textContent = '🎤 소리 켜짐';
+  show('home');
+}
+
+$('startCam').onclick = startCamera;
+$('startView').onclick = startViewer;
+$('flipBtn').onclick = flipCamera;
+$('micBtn').onclick = toggleMic;
+$('stopCam').onclick = stopAll;
+$('soundBtn').onclick = toggleSound;
+$('fullBtn').onclick = toggleFull;
+$('talkBtn').onclick = toggleTalk;
+$('coverBtn').onclick = showCover;
+$('stopView').onclick = stopAll;
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('startView').click(); });
+
+try { $('code').value = localStorage.getItem('fcam-code') || ''; } catch (e) {}
+$('code').addEventListener('input', checkCodeInput);
+checkCodeInput();
+
+/* ---------------- 앱 설치 (PWA) ---------------- */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+
+const isInstalled = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+let installPrompt = null;
+
+// 안드로이드 크롬: 설치 가능해지면 버튼 표시
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('installBtn').style.display = 'block';
+});
+$('installBtn').onclick = async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $('installBtn').style.display = 'none';
+};
+window.addEventListener('appinstalled', () => { $('installBtn').style.display = 'none'; });
+
+// 아이폰: 자동 설치 창이 없으므로 안내 문구 표시
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+if (isIOS && !isInstalled) $('iosHint').style.display = 'block';
+</script>
+</body>
+</html>
