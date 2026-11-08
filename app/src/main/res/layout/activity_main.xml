@@ -158,6 +158,41 @@
                 android:text="📼 자동 녹화: 켜짐" />
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/lowLight"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:textSize="13sp"
+                android:text="🌙 저조도: 끔" />
+
+            <Button
+                android:id="@+id/boost"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:textSize="13sp"
+                android:text="☀ 밝기: 끔" />
+
+            <Button
+                android:id="@+id/denoise"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:textSize="13sp"
+                android:text="✨ 노이즈: 끔" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/openWeb"
             android:layout_width="match_parent"

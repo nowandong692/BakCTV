@@ -21,8 +21,7 @@ import androidx.core.app.ServiceCompat
 import org.json.JSONObject
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
-import org.webrtc.Camera2Enumerator
-import org.webrtc.CameraVideoCapturer
+import org.webrtc.BakCameraCapturer
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
@@ -66,6 +65,10 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         val recordOn: Boolean = true,
         val recording: Boolean = false,
         val lastSaved: String? = null,
+        val lowLight: Int = 0,
+        val manualSupported: Boolean = true,
+        val boost: Int = 0,
+        val denoise: Boolean = false,
     )
 
     /** 연결 하나 (데이터 연결 또는 영상/말하기 연결) */
@@ -85,7 +88,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
 
     private var eglBase: EglBase? = null
     private var factory: PeerConnectionFactory? = null
-    private var capturer: CameraVideoCapturer? = null
+    private var capturer: BakCameraCapturer? = null
     private var textureHelper: SurfaceTextureHelper? = null
     private var videoSource: VideoSource? = null
     private var audioSource: AudioSource? = null
@@ -101,6 +104,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private val orphanCandidates = mutableMapOf<String, MutableList<IceCandidate>>()
 
     private val invert = InvertProcessor()
+    private var lowLight = 0
+    private var denoise = false
     private val detector = MotionDetector { e -> onMotion(e) }
     private var motionActive = false
     private var lastMotionAt = 0L
@@ -184,16 +189,14 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             factory = f
             adm.release()  // 팩토리가 참조를 가지고 있음
 
-            // 카메라 (기본: 후면)
-            val enumerator = Camera2Enumerator(applicationContext)
-            val names = enumerator.deviceNames
-            val back = names.firstOrNull { enumerator.isBackFacing(it) }
-            val frontName = names.firstOrNull { enumerator.isFrontFacing(it) }
-            val camName = back ?: frontName ?: names.firstOrNull()
-                ?: throw IllegalStateException("카메라를 찾을 수 없어요")
-            front = camName == frontName && back == null
-            val cap = enumerator.createCapturer(camName, null)
+            // 카메라 (기본: 후면) — ISO·노출을 직접 조절하는 박CTV 전용 카메라
+            val cap = BakCameraCapturer { msg -> post { setStatus(msg) } }
             capturer = cap
+            front = false
+            lowLight = prefs.getInt("lowLight", 0)
+            invert.boost = prefs.getInt("boost", 0)
+            denoise = prefs.getBoolean("denoise", false)
+            invert.denoise = denoise
             val helper = SurfaceTextureHelper.create("CaptureThread", egl.eglBaseContext)
             textureHelper = helper
             val vSrc = f.createVideoSource(false)
@@ -201,6 +204,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             invert.enabled = getSharedPreferences("bakctv", MODE_PRIVATE).getBoolean("invert", false)
             vSrc.setVideoProcessor(invert)
             cap.initialize(helper, applicationContext, vSrc.capturerObserver)
+            cap.setLowLight(lowLight)
+            cap.setDenoise(denoise)
             cap.startCapture(1280, 720, 30)
             val vt = f.createVideoTrack("v0", vSrc)
             videoTrack = vt
@@ -454,16 +459,41 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             lastText = if (viewers == 0) "촬영 중 · 시청 대기" else "촬영 중"
         }
         publish(Status(true, lastText, viewers, talking, front, micOn, invert.enabled,
-            detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved))
+            detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved,
+            lowLight, capturer?.manualSupported ?: true, invert.boost, denoise))
     }
 
     // ---------------------------------------------------------------- 조작 (화면에서 호출)
 
     fun switchCamera() = post {
-        capturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
-            override fun onCameraSwitchDone(isFront: Boolean) = post { front = isFront; detector.reset(); updateCounts() }
-            override fun onCameraSwitchError(error: String?) {}
-        })
+        capturer?.switchCamera { isFront -> post { front = isFront; detector.reset(); updateCounts() } }
+    }
+
+    // ---------------------------------------------------------------- 저조도·밝기·노이즈
+
+    /** 저조도: 끔 → 밝게 → 최대 → 끔 … */
+    fun cycleLowLight() = post {
+        lowLight = (lowLight + 1) % 3
+        capturer?.setLowLight(lowLight)
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putInt("lowLight", lowLight).apply()
+        detector.reset()
+        updateCounts()
+    }
+
+    /** 밝기 보정: 끔 → 약하게 → 강하게 → 끔 … */
+    fun cycleBoost() = post {
+        invert.boost = (invert.boost + 1) % 3
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putInt("boost", invert.boost).apply()
+        detector.reset()
+        updateCounts()
+    }
+
+    fun toggleDenoise() = post {
+        denoise = !denoise
+        invert.denoise = denoise
+        capturer?.setDenoise(denoise)
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putBoolean("denoise", denoise).apply()
+        updateCounts()
     }
 
     fun toggleMic() = post {
@@ -578,7 +608,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private fun setStatus(text: String) {
         lastText = text
         publish(Status(true, text, 0, false, front, micOn, invert.enabled,
-            detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved))
+            detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved,
+            lowLight, capturer?.manualSupported ?: true, invert.boost, denoise))
     }
 
     private fun publish(s: Status) {

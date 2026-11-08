@@ -37,6 +37,9 @@ class MainActivity : Activity() {
     private lateinit var invertBtn: Button
     private lateinit var motionBtn: Button
     private lateinit var recordBtn: Button
+    private lateinit var lowLightBtn: Button
+    private lateinit var boostBtn: Button
+    private lateinit var denoiseBtn: Button
 
     private var previewAttached = false
     private var askedStorage = false
@@ -58,6 +61,9 @@ class MainActivity : Activity() {
         invertBtn = findViewById(R.id.invert)
         motionBtn = findViewById(R.id.motion)
         recordBtn = findViewById(R.id.record)
+        lowLightBtn = findViewById(R.id.lowLight)
+        boostBtn = findViewById(R.id.boost)
+        denoiseBtn = findViewById(R.id.denoise)
 
         val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
         code.setText(prefs.getString("code", ""))
@@ -75,6 +81,9 @@ class MainActivity : Activity() {
         invertBtn.setOnClickListener { StreamService.current?.toggleInvert() }
         motionBtn.setOnClickListener { StreamService.current?.cycleMotion() }
         recordBtn.setOnClickListener { StreamService.current?.toggleRecord() }
+        lowLightBtn.setOnClickListener { StreamService.current?.cycleLowLight() }
+        boostBtn.setOnClickListener { StreamService.current?.cycleBoost() }
+        denoiseBtn.setOnClickListener { StreamService.current?.toggleDenoise() }
         findViewById<Button>(R.id.openWeb).setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
         }
@@ -136,6 +145,16 @@ class MainActivity : Activity() {
         motionBtn.isEnabled = running
         motionBtn.text = "👁 감지: " + MotionDetector.LABELS[s.motionLevel.coerceIn(0, 3)]
         recordBtn.isEnabled = running
+        lowLightBtn.isEnabled = running
+        boostBtn.isEnabled = running
+        denoiseBtn.isEnabled = running
+        lowLightBtn.text = "🌙 저조도: " + when (s.lowLight) {
+            1 -> "밝게"
+            2 -> if (s.manualSupported) "최대" else "최대(미지원)"
+            else -> "끔"
+        }
+        boostBtn.text = "☀ 밝기: " + arrayOf("끔", "약", "강")[s.boost.coerceIn(0, 2)]
+        denoiseBtn.text = if (s.denoise) "✨ 노이즈: 줄임" else "✨ 노이즈: 끔"
         recordBtn.text = if (s.recordOn) "📼 자동 녹화: 켜짐" else "📼 자동 녹화: 꺼짐"
         detail.text = if (!running) "" else buildString {
             append("시청 ${s.viewers}명")
