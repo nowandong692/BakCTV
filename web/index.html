@@ -57,6 +57,7 @@
     background: #fff2; color: #fff; backdrop-filter: blur(8px); cursor: pointer; }
   .ctrl.danger { background: #e5484dcc; }
   .ctrl.on { background: #30a46c; }
+  video.invert { filter: invert(1); }
   #cover { display: none; position: fixed; inset: 0; z-index: 100; background: #000;
     align-items: center; justify-content: center; text-align: center;
     touch-action: manipulation; user-select: none; -webkit-user-select: none; }
@@ -116,6 +117,7 @@
     <div class="controls">
       <button class="ctrl" id="soundBtn">🔊 소리 끄기</button>
       <button class="ctrl" id="talkBtn">🎙 말하기</button>
+      <button class="ctrl" id="invertBtn">🎨 색상 반전</button>
       <button class="ctrl" id="fullBtn">⛶ 전체화면</button>
       <button class="ctrl danger" id="stopView">■ 나가기</button>
     </div>
@@ -492,6 +494,15 @@ $('stopCam').onclick = stopAll;
 $('soundBtn').onclick = toggleSound;
 $('fullBtn').onclick = toggleFull;
 $('talkBtn').onclick = toggleTalk;
+
+// 색상 반전 (보는 화면에만 적용, 설정 기억)
+function applyInvert(on) {
+  $('remoteVideo').classList.toggle('invert', on);
+  $('invertBtn').classList.toggle('on', on);
+  try { localStorage.setItem('fcam-invert', on ? '1' : '0'); } catch (e) {}
+}
+$('invertBtn').onclick = () => applyInvert(!$('remoteVideo').classList.contains('invert'));
+try { applyInvert(localStorage.getItem('fcam-invert') === '1'); } catch (e) {}
 $('coverBtn').onclick = showCover;
 $('stopView').onclick = stopAll;
 $('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('startView').click(); });
