@@ -1,4 +1,5 @@
 name: 박CTV 웹 배포 (GitHub Pages)
+# 저장소 Settings → Pages → Source 가 "GitHub Actions" 여야 동작합니다.
 
 on:
   push:
