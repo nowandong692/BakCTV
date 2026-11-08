@@ -10,59 +10,146 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
+import org.webrtc.RendererCommon
+import org.webrtc.SurfaceViewRenderer
 
-/**
- * 박CTV 촬영용 앱.
- * 웹 버전 박CTV 화면을 그대로 띄우고, CameraKeepAliveService 로
- * 화면이 꺼져도 카메라·마이크가 계속 동작하게 한다.
- */
+/** 박CTV 촬영 화면 (앱 전용). 실제 촬영·전송은 StreamService 가 한다. */
 class MainActivity : Activity() {
 
-    private lateinit var webView: WebView
-    private var pendingWebPermission: PermissionRequest? = null
+    private lateinit var preview: SurfaceViewRenderer
+    private lateinit var placeholder: TextView
+    private lateinit var status: TextView
+    private lateinit var detail: TextView
+    private lateinit var talkBadge: TextView
+    private lateinit var code: EditText
+    private lateinit var codeCheck: TextView
+    private lateinit var startStop: Button
+    private lateinit var flip: Button
+    private lateinit var mic: Button
 
-    @SuppressLint("SetJavaScriptEnabled")
+    private var previewAttached = false
+    private var visible = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (intent?.action == ACTION_EXIT) { finishAndRemoveTask(); return }
+        setContentView(R.layout.activity_main)
+        preview = findViewById(R.id.preview)
+        placeholder = findViewById(R.id.placeholder)
+        status = findViewById(R.id.status)
+        detail = findViewById(R.id.detail)
+        talkBadge = findViewById(R.id.talkBadge)
+        code = findViewById(R.id.code)
+        codeCheck = findViewById(R.id.codeCheck)
+        startStop = findViewById(R.id.startStop)
+        flip = findViewById(R.id.flip)
+        mic = findViewById(R.id.mic)
 
-        webView = WebView(this)
-        setContentView(webView)
+        val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
+        code.setText(prefs.getString("code", ""))
+        code.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) = checkCode()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
 
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false
-            userAgentString = "$userAgentString BakCTVApp"
+        startStop.setOnClickListener {
+            if (StreamService.latestStatus.running) stopStreaming() else startStreaming()
         }
-
-        // 링크는 앱 안에서 열기
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = false
+        flip.setOnClickListener { StreamService.current?.switchCamera() }
+        mic.setOnClickListener { StreamService.current?.toggleMic() }
+        findViewById<Button>(R.id.openWeb).setOnClickListener {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
         }
-
-        // 웹페이지가 카메라·마이크를 요청하면 허용
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread {
-                    if (hasMediaPermissions()) {
-                        request.grant(request.resources)
-                    } else {
-                        pendingWebPermission = request
-                        askPermissions()
-                    }
-                }
-            }
-        }
-
-        if (hasMediaPermissions()) onPermissionsReady() else askPermissions()
     }
+
+    override fun onStart() {
+        super.onStart()
+        visible = true
+        StreamService.statusListener = { render(it) }
+        render(StreamService.latestStatus)
+    }
+
+    override fun onStop() {
+        // 화면이 꺼지면 미리보기만 끈다 (촬영·전송은 서비스에서 계속)
+        visible = false
+        detachPreview()
+        StreamService.statusListener = null
+        super.onStop()
+    }
+
+    // ---------------------------------------------------------------- 시작/종료
+
+    private fun startStreaming() {
+        val c = code.text.toString().trim()
+        RoomCode.problem(c)?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show(); return }
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putString("code", c).apply()
+        if (!hasMediaPermissions()) { askPermissions(); return }
+        ContextCompat.startForegroundService(
+            this, Intent(this, StreamService::class.java).putExtra(StreamService.EXTRA_CODE, c)
+        )
+        askBatteryExemptionOnce()
+    }
+
+    private fun stopStreaming() {
+        stopService(Intent(this, StreamService::class.java))
+    }
+
+    // ---------------------------------------------------------------- 화면 갱신
+
+    private fun render(s: StreamService.Status) {
+        val running = s.running
+        code.isEnabled = !running
+        flip.isEnabled = running
+        mic.isEnabled = running
+        startStop.text = if (running) "■ 촬영 종료" else "이 기기로 촬영하기"
+        mic.text = if (s.micOn) "🎤 소리 켜짐" else "🔇 소리 꺼짐"
+        status.text = when {
+            running -> "● " + s.text
+            s.text.isNotEmpty() -> s.text
+            else -> "대기 중"
+        }
+        detail.text = if (running) "시청 ${s.viewers}명" else ""
+        talkBadge.visibility = if (s.talking) View.VISIBLE else View.GONE
+        placeholder.visibility = if (running) View.GONE else View.VISIBLE
+        if (running && visible) attachPreview() else detachPreview()
+        if (previewAttached) preview.setMirror(s.frontCamera)
+        if (!running) checkCode()
+    }
+
+    private fun checkCode() {
+        if (StreamService.latestStatus.running) { codeCheck.text = ""; return }
+        val c = code.text.toString().trim()
+        val p = if (c.isEmpty()) "방 코드를 입력하세요" else RoomCode.problem(c)
+        codeCheck.text = if (p == null) "✔ 사용할 수 있는 코드예요" else "⚠ $p"
+        codeCheck.setTextColor(if (p == null) 0xFF30A46C.toInt() else 0xFFF2A33A.toInt())
+        startStop.isEnabled = p == null
+    }
+
+    private fun attachPreview() {
+        if (previewAttached) return
+        val ctx = StreamService.current?.eglContext() ?: return
+        preview.init(ctx, null)
+        preview.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+        StreamService.addPreview(preview)
+        previewAttached = true
+    }
+
+    private fun detachPreview() {
+        if (!previewAttached) return
+        StreamService.removePreview(preview)
+        preview.release()
+        previewAttached = false
+    }
+
+    // ---------------------------------------------------------------- 권한
 
     private fun hasMediaPermissions() =
         listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO).all {
@@ -78,26 +165,11 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_PERMS) return
-        if (hasMediaPermissions()) {
-            pendingWebPermission?.let { it.grant(it.resources) }
-            pendingWebPermission = null
-            onPermissionsReady()
-        } else {
-            pendingWebPermission?.deny()
-            pendingWebPermission = null
-            android.widget.Toast.makeText(this, "카메라와 마이크 권한이 있어야 촬영할 수 있어요.", android.widget.Toast.LENGTH_LONG).show()
-            if (webView.url == null) webView.loadUrl(getString(R.string.app_url))
-        }
+        if (hasMediaPermissions()) startStreaming()
+        else Toast.makeText(this, "카메라와 마이크 권한이 있어야 촬영할 수 있어요.", Toast.LENGTH_LONG).show()
     }
 
-    private fun onPermissionsReady() {
-        // 앱이 화면에 보이는 지금 서비스를 시작해야 화면이 꺼진 뒤에도 카메라를 쓸 수 있다
-        ContextCompat.startForegroundService(this, Intent(this, CameraKeepAliveService::class.java))
-        askBatteryExemptionOnce()
-        if (webView.url == null) webView.loadUrl(getString(R.string.app_url))
-    }
-
-    /** 배터리 최적화 예외 요청 (처음 한 번만). 절전 때문에 연결이 끊기는 것을 막는다. */
+    /** 배터리 최적화 예외 요청 (처음 한 번만) */
     @SuppressLint("BatteryLife")
     private fun askBatteryExemptionOnce() {
         val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
@@ -111,31 +183,7 @@ class MainActivity : Activity() {
         }
     }
 
-    // 알림의 "종료" 버튼
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        if (intent.action == ACTION_EXIT) finishAndRemoveTask()
-    }
-
-    // 뒤로 가기: 앱을 끄지 않고 뒤로 보내기만 함 (촬영 유지)
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
-    }
-
-    // 주의: onPause/onStop 에서 webView.onPause() 를 부르지 않는다. 부르면 화면이 꺼질 때 촬영이 멈춘다.
-
-    override fun onDestroy() {
-        stopService(Intent(this, CameraKeepAliveService::class.java))
-        if (::webView.isInitialized) {
-            webView.loadUrl("about:blank")
-            webView.destroy()
-        }
-        super.onDestroy()
-    }
-
     companion object {
-        const val ACTION_EXIT = "com.bakctv.app.EXIT"
         private const val REQ_PERMS = 1
     }
 }

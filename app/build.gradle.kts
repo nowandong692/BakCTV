@@ -48,4 +48,6 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("io.getstream:stream-webrtc-android:1.3.9")   // 구글 WebRTC (카메라·영상 전송)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")         // PeerJS 연결 서버와 통신
 }
