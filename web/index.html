@@ -58,6 +58,15 @@
   .ctrl.danger { background: #e5484dcc; }
   .ctrl.on { background: #30a46c; }
   video.invert { filter: invert(1); }
+  .motion-frame { display: none; position: absolute; inset: 0; border: 6px solid #e5484d;
+    pointer-events: none; animation: mpulse .8s infinite; }
+  @keyframes mpulse { 50% { border-color: #e5484d44; } }
+  .motion-box { display: none; position: absolute; border: 3px solid #ff3b3b; border-radius: 4px;
+    box-shadow: 0 0 0 2px #0009; pointer-events: none; transition: all .15s; }
+  .motion-banner { display: none; position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
+    background: #e5484de6; padding: 10px 18px; border-radius: 20px; font-size: 17px; font-weight: 700;
+    white-space: nowrap; pointer-events: none; }
+  .motion-info { font-size: 13px; color: #ddd; }
   .proc-src { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
   #cover { display: none; position: fixed; inset: 0; z-index: 100; background: #000;
     align-items: center; justify-content: center; text-align: center;
@@ -114,11 +123,16 @@
     <video id="remoteVideo" autoplay playsinline muted></video>
     <audio id="remoteAudio" autoplay playsinline></audio>
     <div class="msg" id="viewMsg">촬영 기기를 찾는 중…</div>
+    <div id="motionFrame" class="motion-frame"></div>
+    <div id="motionBox" class="motion-box"></div>
+    <div id="motionBanner" class="motion-banner"></div>
     <div class="topbar">
       <div class="status"><span class="dot" id="viewDot"></span><span id="viewStatus">연결 중…</span><span class="meter" id="viewMeter"></span></div>
+      <span id="motionInfo" class="motion-info"></span>
     </div>
     <div class="controls">
       <button class="ctrl" id="soundBtn">🔊 소리 끄기</button>
+      <button class="ctrl" id="alertBtn">🔔 알림 켜짐</button>
       <button class="ctrl" id="talkBtn">🎙 말하기</button>
       <button class="ctrl" id="invertBtn">🎨 색상 반전</button>
       <button class="ctrl" id="fullBtn">⛶ 전체화면</button>
@@ -444,13 +458,18 @@ async function startViewer() {
     clearTimeout(retryTimer);
     if (!peer || peer.destroyed) return;
     setViewStatus('연결 중…', '', '촬영 기기를 찾는 중…');
-    const conn = peer.connect(target, { reliable: true });
+    // 'json' 방식: 촬영 기기가 보내는 움직임 알림을 받기 위해
+    let conn;
+    try { conn = peer.connect(target, { reliable: true, serialization: 'json' }); }
+    catch (e) { conn = peer.connect(target, { reliable: true }); }   // 혹시 json 방식이 안 되면 기본 방식
+    conn.on('data', handleCamData);
     conn.on('close', () => scheduleRetry('촬영이 끊겼습니다. 다시 연결하는 중…'));
   };
   const scheduleRetry = (msg) => {
     $('remoteVideo').srcObject = null;
     $('remoteAudio').srcObject = null;
     stopMeter('view');
+    hideMotion(); motionLabel = null; updateMotionInfo();
     setViewStatus('대기 중', '', msg);
     clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, 3000);
@@ -521,6 +540,100 @@ function stopTalk() {
   $('talkBtn').classList.remove('on');
 }
 
+/* ---------------- 움직임 알림 (보는 쪽) ---------------- */
+let alertsOn = true;
+try { alertsOn = localStorage.getItem('fcam-alerts') !== '0'; } catch (e) {}
+let motionLabel = null, lastMotionAt = 0, lastBox = null;
+const fmtTime = (t) => new Date(t).toLocaleTimeString('ko-KR', { hour12: false });
+
+function handleCamData(d) {
+  let m = d;
+  try {
+    if (m instanceof ArrayBuffer || m instanceof Uint8Array) m = new TextDecoder().decode(m);
+    if (typeof m === 'string') m = JSON.parse(m);
+  } catch (e) { return; }
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'hello') {
+    motionLabel = m.label || null;
+    if (!m.active) hideMotion();
+    updateMotionInfo();
+  } else if (m.t === 'motion') {
+    if (m.on) {
+      if (m.start) { lastMotionAt = m.at || Date.now(); alertMotion(); }
+      showMotion(m.box);
+    } else {
+      hideMotion();
+    }
+    updateMotionInfo();
+  }
+}
+
+function showMotion(box) {
+  $('motionFrame').style.display = 'block';
+  const b = $('motionBanner');
+  b.textContent = '⚠ 움직임 감지 ' + fmtTime(lastMotionAt || Date.now());
+  b.style.display = 'block';
+  if (box) { lastBox = box; positionBox(); }
+}
+function hideMotion() {
+  $('motionFrame').style.display = 'none';
+  $('motionBanner').style.display = 'none';
+  $('motionBox').style.display = 'none';
+  lastBox = null;
+}
+// 감지 영역을 실제로 보이는 영상 위치에 맞춰 그림 (화면 비율 차이 보정)
+function positionBox() {
+  const v = $('remoteVideo'), el = $('motionBox'), box = lastBox;
+  if (!box || !v.videoWidth) return;
+  const W = v.clientWidth, H = v.clientHeight;
+  const sc = Math.min(W / v.videoWidth, H / v.videoHeight);
+  const dw = v.videoWidth * sc, dh = v.videoHeight * sc;
+  const ox = (W - dw) / 2, oy = (H - dh) / 2;
+  el.style.left = (ox + box[0] * dw) + 'px';
+  el.style.top = (oy + box[1] * dh) + 'px';
+  el.style.width = Math.max(12, box[2] * dw) + 'px';
+  el.style.height = Math.max(12, box[3] * dh) + 'px';
+  el.style.display = 'block';
+}
+window.addEventListener('resize', positionBox);
+
+function updateMotionInfo() {
+  let t = '';
+  if (motionLabel) t = '👁 ' + motionLabel;
+  if (lastMotionAt) t += (t ? ' · ' : '') + '마지막 ' + fmtTime(lastMotionAt);
+  $('motionInfo').textContent = t;
+}
+
+function beep(times = 2) {
+  ensureAudioCtx();
+  if (!audioCtx) return;
+  const t0 = audioCtx.currentTime;
+  for (let i = 0; i < times; i++) {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880;
+    const t = t0 + i * 0.25;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.2);
+  }
+}
+function alertMotion() {
+  if (!alertsOn) return;
+  beep(2);
+  if (navigator.vibrate) navigator.vibrate([300, 120, 300]);
+}
+function updateAlertBtn() {
+  $('alertBtn').textContent = alertsOn ? '🔔 알림 켜짐' : '🔕 알림 꺼짐';
+}
+function toggleAlerts() {
+  alertsOn = !alertsOn;
+  try { localStorage.setItem('fcam-alerts', alertsOn ? '1' : '0'); } catch (e) {}
+  updateAlertBtn();
+  if (alertsOn) beep(1);   // 소리 확인용
+}
+
 function toggleFull() {
   const el = $('remoteVideo');
   if (document.fullscreenElement) document.exitFullscreen();
@@ -543,6 +656,7 @@ function stopAll() {
   $('remoteVideo').srcObject = null;
   $('remoteAudio').srcObject = null;
   stopMeter('cam'); stopMeter('view');
+  hideMotion(); motionLabel = null; lastMotionAt = 0; updateMotionInfo();
   soundOn = true; updateSoundBtn();
   $('micBtn').textContent = '🎤 소리 켜짐';
   show('home');
@@ -557,6 +671,8 @@ $('stopCam').onclick = stopAll;
 $('soundBtn').onclick = toggleSound;
 $('fullBtn').onclick = toggleFull;
 $('talkBtn').onclick = toggleTalk;
+$('alertBtn').onclick = toggleAlerts;
+updateAlertBtn();
 
 // 색상 반전 (보는 화면에만 적용, 설정 기억)
 function applyInvert(on) {

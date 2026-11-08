@@ -60,6 +60,9 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         val frontCamera: Boolean = false,
         val micOn: Boolean = true,
         val inverted: Boolean = false,
+        val motionLevel: Int = 2,
+        val motionActive: Boolean = false,
+        val lastMotionAt: Long = 0L,
     )
 
     /** 연결 하나 (데이터 연결 또는 영상/말하기 연결) */
@@ -67,6 +70,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         lateinit var pc: PeerConnection
         var remoteSet = false
         val pending = mutableListOf<IceCandidate>()
+        var dc: DataChannel? = null   // 시청자에게 움직임 알림을 보내는 통로
     }
 
     // 모든 상태 변경은 이 한 줄짜리 작업 큐에서만 처리 (동시 접근 방지)
@@ -94,6 +98,9 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private val orphanCandidates = mutableMapOf<String, MutableList<IceCandidate>>()
 
     private val invert = InvertProcessor()
+    private val detector = MotionDetector { e -> onMotion(e) }
+    private var motionActive = false
+    private var lastMotionAt = 0L
     private var front = false
     private var micOn = true
     private var lastText = "준비 중…"
@@ -183,7 +190,10 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             vSrc.setVideoProcessor(invert)
             cap.initialize(helper, applicationContext, vSrc.capturerObserver)
             cap.startCapture(1280, 720, 30)
-            videoTrack = f.createVideoTrack("v0", vSrc)
+            val vt = f.createVideoTrack("v0", vSrc)
+            videoTrack = vt
+            detector.sensitivity = getSharedPreferences("bakctv", MODE_PRIVATE).getInt("motion", 2)
+            vt.addSink(detector)
 
             // 마이크
             val ac = MediaConstraints().apply {
@@ -215,6 +225,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         signaling?.close(); signaling = null
         conns.values.toList().forEach { closeConn(it.id) }
         val vt = videoTrack
+        try { vt?.removeSink(detector) } catch (_: Exception) { }
         main.post { previewSinks.forEach { s -> try { vt?.removeSink(s) } catch (_: Exception) { } } }
         try { capturer?.stopCapture() } catch (_: Exception) { }
         capturer?.dispose(); capturer = null
@@ -372,10 +383,11 @@ class StreamService : Service(), PeerJsSignaling.Listener {
                 }
             }
             override fun onDataChannel(dc: DataChannel) {
+                post { conns[connId]?.dc = dc }
                 dc.registerObserver(object : DataChannel.Observer {
                     override fun onStateChange() {
                         when (dc.state()) {
-                            DataChannel.State.OPEN -> post { startMediaCall(peer) }
+                            DataChannel.State.OPEN -> post { sendTo(dc, helloJson()); startMediaCall(peer) }
                             DataChannel.State.CLOSED -> post { closePeer(peer) }
                             else -> {}
                         }
@@ -412,6 +424,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
 
     private fun closeConn(connId: String) {
         val conn = conns.remove(connId) ?: return
+        conn.dc?.let { try { it.unregisterObserver(); it.dispose() } catch (_: Exception) { } }
+        conn.dc = null
         try { conn.pc.dispose() } catch (_: Exception) { }
         orphanCandidates.remove(connId)
         updateCounts()
@@ -423,14 +437,15 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         if (signaling != null) {
             lastText = if (viewers == 0) "촬영 중 · 시청 대기" else "촬영 중"
         }
-        publish(Status(true, lastText, viewers, talking, front, micOn, invert.enabled))
+        publish(Status(true, lastText, viewers, talking, front, micOn, invert.enabled,
+            detector.sensitivity, motionActive, lastMotionAt))
     }
 
     // ---------------------------------------------------------------- 조작 (화면에서 호출)
 
     fun switchCamera() = post {
         capturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
-            override fun onCameraSwitchDone(isFront: Boolean) = post { front = isFront; updateCounts() }
+            override fun onCameraSwitchDone(isFront: Boolean) = post { front = isFront; detector.reset(); updateCounts() }
             override fun onCameraSwitchError(error: String?) {}
         })
     }
@@ -439,6 +454,50 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         micOn = !micOn
         audioTrack?.setEnabled(micOn)
         updateCounts()
+    }
+
+    /** 움직임 감지 민감도: 끔 → 낮음 → 보통 → 높음 → 끔 … */
+    fun cycleMotion() = post {
+        val next = (detector.sensitivity + 1) % 4
+        detector.sensitivity = next
+        getSharedPreferences("bakctv", MODE_PRIVATE).edit().putInt("motion", next).apply()
+        if (next == 0) motionActive = false
+        broadcast(helloJson())
+        updateCounts()
+    }
+
+    // ---------------------------------------------------------------- 움직임 알림
+
+    private fun onMotion(e: MotionDetector.Event) = post {
+        motionActive = e.on
+        val msg = JSONObject().put("t", "motion").put("on", e.on).put("start", e.start)
+        if (e.start) {
+            lastMotionAt = System.currentTimeMillis()
+            msg.put("at", lastMotionAt)
+        }
+        e.box?.let { b -> msg.put("box", org.json.JSONArray().apply { b.forEach { put(it.toDouble()) } }) }
+        msg.put("s", e.strength.toDouble())
+        broadcast(msg)
+        if (e.start || !e.on) updateCounts()
+    }
+
+    private fun helloJson() = JSONObject()
+        .put("t", "hello")
+        .put("motion", detector.sensitivity)
+        .put("label", MotionDetector.LABELS[detector.sensitivity])
+        .put("active", motionActive)
+
+    private fun broadcast(msg: JSONObject) {
+        conns.values.mapNotNull { it.dc }.forEach { sendTo(it, msg) }
+    }
+
+    private fun sendTo(dc: DataChannel, msg: JSONObject) {
+        try {
+            if (dc.state() != DataChannel.State.OPEN) return
+            // 웹(PeerJS 'json' 방식)은 UTF-8 바이트로 받아 JSON 으로 해석한다
+            val bytes = msg.toString().toByteArray(Charsets.UTF_8)
+            dc.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(bytes), true))
+        } catch (_: Exception) { }
     }
 
     fun toggleInvert() = post {
@@ -478,7 +537,8 @@ class StreamService : Service(), PeerJsSignaling.Listener {
 
     private fun setStatus(text: String) {
         lastText = text
-        publish(Status(true, text, 0, false, front, micOn, invert.enabled))
+        publish(Status(true, text, 0, false, front, micOn, invert.enabled,
+            detector.sensitivity, motionActive, lastMotionAt))
     }
 
     private fun publish(s: Status) {

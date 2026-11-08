@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var flip: Button
     private lateinit var mic: Button
     private lateinit var invertBtn: Button
+    private lateinit var motionBtn: Button
 
     private var previewAttached = false
     private var visible = false
@@ -53,6 +54,7 @@ class MainActivity : Activity() {
         flip = findViewById(R.id.flip)
         mic = findViewById(R.id.mic)
         invertBtn = findViewById(R.id.invert)
+        motionBtn = findViewById(R.id.motion)
 
         val prefs = getSharedPreferences("bakctv", MODE_PRIVATE)
         code.setText(prefs.getString("code", ""))
@@ -68,6 +70,7 @@ class MainActivity : Activity() {
         flip.setOnClickListener { StreamService.current?.switchCamera() }
         mic.setOnClickListener { StreamService.current?.toggleMic() }
         invertBtn.setOnClickListener { StreamService.current?.toggleInvert() }
+        motionBtn.setOnClickListener { StreamService.current?.cycleMotion() }
         findViewById<Button>(R.id.openWeb).setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
         }
@@ -121,7 +124,15 @@ class MainActivity : Activity() {
             s.text.isNotEmpty() -> s.text
             else -> "대기 중"
         }
-        detail.text = if (running) "시청 ${s.viewers}명" else ""
+        motionBtn.isEnabled = running
+        motionBtn.text = "👁 움직임 감지: " + MotionDetector.LABELS[s.motionLevel.coerceIn(0, 3)]
+        detail.text = if (!running) "" else buildString {
+            append("시청 ${s.viewers}명")
+            if (s.motionActive) append("   ⚠ 움직임 감지 중!")
+            else if (s.lastMotionAt > 0) append("   마지막 감지 " +
+                java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.KOREA).format(java.util.Date(s.lastMotionAt)))
+        }
+        detail.setTextColor(if (s.motionActive) 0xFFFF6B6B.toInt() else 0xFFCCCCCC.toInt())
         talkBadge.visibility = if (s.talking) View.VISIBLE else View.GONE
         placeholder.visibility = if (running) View.GONE else View.VISIBLE
         if (running && visible) attachPreview() else detachPreview()
