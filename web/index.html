@@ -138,6 +138,7 @@
       <button class="ctrl" id="soundBtn">🔊 소리 끄기</button>
       <button class="ctrl" id="alertBtn">🔔 알림 켜짐</button>
       <button class="ctrl" id="talkBtn">🎙 말하기</button>
+      <button class="ctrl" id="voiceBtn">🎭 목소리: 그대로</button>
       <button class="ctrl" id="invertBtn">🎨 색상 반전</button>
       <button class="ctrl" id="fullBtn">⛶ 전체화면</button>
       <button class="ctrl danger" id="stopView">■ 나가기</button>
@@ -566,7 +567,9 @@ async function toggleTalk() {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
   } catch (e) { return alert('마이크를 켤 수 없습니다. 마이크 권한을 허용해 주세요.'); }
-  talkCall = peer.call(viewTarget, talkStream);
+  let sendStream = talkStream;
+  try { sendStream = await buildVoiceStream(talkStream); } catch (e) { sendStream = talkStream; }
+  talkCall = peer.call(viewTarget, sendStream);
   talkCall.on('close', stopTalk);
   talkCall.on('error', stopTalk);
   $('talkBtn').textContent = '🎙 말하는 중 (누르면 끝)';
@@ -576,8 +579,129 @@ function stopTalk() {
   const c = talkCall; talkCall = null;
   if (c) c.close();
   if (talkStream) { talkStream.getTracks().forEach(t => t.stop()); talkStream = null; }
+  teardownVoice();
   $('talkBtn').textContent = '🎙 말하기';
   $('talkBtn').classList.remove('on');
+}
+
+/* ---------------- 음성 변조 (말하기용, 재미 기능) ---------------- */
+const VOICES = [
+  ['none', '그대로'], ['chipmunk', '🐿 다람쥐'], ['monster', '👹 괴물'], ['robot', '🤖 로봇'], ['echo', '🏔 메아리'],
+];
+let voiceType = 'none';
+try { voiceType = localStorage.getItem('fcam-voice') || 'none'; } catch (e) {}
+let voiceIn = null, voiceOut = null, voiceNodes = [], workletReady = null;
+
+// 실시간 음높이 변경기: 두 개의 읽기 위치를 엇갈리게 움직이며 부드럽게 섞음 (지연 약 30ms)
+const PITCH_WORKLET = `
+class PitchShift extends AudioWorkletProcessor {
+  static get parameterDescriptors() { return [{ name: 'ratio', defaultValue: 1 }]; }
+  constructor() { super(); this.size = 8192; this.buf = new Float32Array(this.size); this.w = 0; this.p = 0; this.win = 1400; }
+  read(d) { let pos = this.w - d; while (pos < 0) pos += this.size; const i = Math.floor(pos), f = pos - i;
+    return this.buf[i % this.size] * (1 - f) + this.buf[(i + 1) % this.size] * f; }
+  process(inputs, outputs, params) {
+    const inp = inputs[0] && inputs[0][0], out = outputs[0];
+    if (!out || !out[0]) return true;
+    const ratio = params.ratio[0], step = (1 - ratio) / this.win;
+    for (let n = 0; n < out[0].length; n++) {
+      this.buf[this.w] = inp ? inp[n] : 0;
+      this.p += step; if (this.p >= 1) this.p -= 1; if (this.p < 0) this.p += 1;
+      const p2 = (this.p + 0.5) % 1;
+      const g1 = Math.sin(Math.PI * this.p) ** 2, g2 = 1 - g1;   // 합이 항상 1 (소리 크기 일정)
+      const y = g1 * this.read(this.p * this.win + 1) + g2 * this.read(p2 * this.win + 1);
+      for (let c = 0; c < out.length; c++) out[c][n] = y;
+      this.w = (this.w + 1) % this.size;
+    }
+    return true;
+  }
+}
+registerProcessor('pitch-shift', PitchShift);`;
+
+function ensureWorklet() {
+  if (!workletReady) {
+    workletReady = (audioCtx && audioCtx.audioWorklet)
+      ? audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([PITCH_WORKLET], { type: 'application/javascript' })))
+          .then(() => true).catch(() => false)
+      : Promise.resolve(false);
+  }
+  return workletReady;
+}
+
+async function buildVoiceStream(mic) {
+  ensureAudioCtx();
+  if (!audioCtx) return mic;
+  await ensureWorklet();
+  teardownVoice();
+  voiceIn = audioCtx.createGain();
+  audioCtx.createMediaStreamSource(mic).connect(voiceIn);
+  voiceOut = audioCtx.createMediaStreamDestination();
+  await applyVoice();
+  return voiceOut.stream;
+}
+
+// 말하는 중에 목소리를 바꿔도 바로 적용
+async function applyVoice() {
+  if (!voiceIn || !voiceOut) return;
+  try { voiceIn.disconnect(); } catch (e) {}
+  voiceNodes.forEach(n => { try { n.disconnect(); } catch (e) {} try { n.stop && n.stop(); } catch (e) {} });
+  voiceNodes = [];
+  const ctx = audioCtx, out = voiceOut;
+  const pitch = async (ratio) => {
+    if (!(await ensureWorklet())) { voiceIn.connect(out); return; }   // 지원 안 하면 그대로
+    const node = new AudioWorkletNode(ctx, 'pitch-shift');
+    node.parameters.get('ratio').value = ratio;
+    voiceIn.connect(node); voiceNodes.push(node);
+    return node;
+  };
+  if (voiceType === 'chipmunk') {
+    const n = await pitch(1.7); if (n) n.connect(out);
+  } else if (voiceType === 'monster') {
+    const n = await pitch(0.62);
+    if (n) {
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200;
+      const boost = ctx.createGain(); boost.gain.value = 1.4;
+      n.connect(lp); lp.connect(boost); boost.connect(out); voiceNodes.push(lp, boost);
+    }
+  } else if (voiceType === 'robot') {
+    // 링 변조: 목소리에 낮은 웅웅 소리를 곱함
+    const ring = ctx.createGain(); ring.gain.value = 0;
+    const osc = ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = 55;
+    const depth = ctx.createGain(); depth.gain.value = 1;
+    osc.connect(depth); depth.connect(ring.gain); osc.start();
+    const boost = ctx.createGain(); boost.gain.value = 1.6;
+    voiceIn.connect(ring); ring.connect(boost); boost.connect(out);
+    voiceNodes.push(ring, osc, depth, boost);
+  } else if (voiceType === 'echo') {
+    const delay = ctx.createDelay(1.0); delay.delayTime.value = 0.28;
+    const fb = ctx.createGain(); fb.gain.value = 0.45;
+    const wet = ctx.createGain(); wet.gain.value = 0.7;
+    voiceIn.connect(out);
+    voiceIn.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(out);
+    voiceNodes.push(delay, fb, wet);
+  } else {
+    voiceIn.connect(out);
+  }
+}
+
+function teardownVoice() {
+  voiceNodes.forEach(n => { try { n.disconnect(); } catch (e) {} try { n.stop && n.stop(); } catch (e) {} });
+  voiceNodes = [];
+  if (voiceIn) { try { voiceIn.disconnect(); } catch (e) {} voiceIn = null; }
+  voiceOut = null;
+}
+
+function updateVoiceBtn() {
+  const v = VOICES.find(x => x[0] === voiceType) || VOICES[0];
+  $('voiceBtn').textContent = '🎭 목소리: ' + v[1];
+  $('voiceBtn').classList.toggle('on', voiceType !== 'none');
+}
+function cycleVoice() {
+  ensureAudioCtx();
+  const i = VOICES.findIndex(x => x[0] === voiceType);
+  voiceType = VOICES[(i + 1) % VOICES.length][0];
+  try { localStorage.setItem('fcam-voice', voiceType); } catch (e) {}
+  updateVoiceBtn();
+  applyVoice();
 }
 
 /* ---------------- 움직임 알림 (보는 쪽) ---------------- */
@@ -765,6 +889,8 @@ $('stopCam').onclick = stopAll;
 $('soundBtn').onclick = toggleSound;
 $('fullBtn').onclick = toggleFull;
 $('talkBtn').onclick = toggleTalk;
+$('voiceBtn').onclick = cycleVoice;
+updateVoiceBtn();
 $('alertBtn').onclick = toggleAlerts;
 updateAlertBtn();
 
