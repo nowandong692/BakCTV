@@ -41,6 +41,7 @@ class MainActivity : Activity() {
     private lateinit var boostBtn: Button
     private lateinit var denoiseBtn: Button
 
+    private lateinit var updater: AppUpdater
     private var previewAttached = false
     private var askedStorage = false
     private var visible = false
@@ -84,6 +85,17 @@ class MainActivity : Activity() {
         lowLightBtn.setOnClickListener { StreamService.current?.cycleLowLight() }
         boostBtn.setOnClickListener { StreamService.current?.cycleBoost() }
         denoiseBtn.setOnClickListener { StreamService.current?.toggleDenoise() }
+        // 업데이트: 앱을 열 때 자동 확인(6시간에 한 번) + 버전 글자를 누르면 바로 확인
+        updater = AppUpdater(this)
+        val versionInfo = findViewById<TextView>(R.id.versionInfo)
+        versionInfo.text = "버전 1.${updater.currentVersion} · 업데이트 확인"
+        versionInfo.setOnClickListener { updater.check(quiet = false) }
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("lastUpdateCheck", 0) > 6 * 3600_000L) {
+            prefs.edit().putLong("lastUpdateCheck", now).apply()
+            updater.check(quiet = true)
+        }
+
         findViewById<Button>(R.id.openWeb).setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
         }
@@ -94,6 +106,11 @@ class MainActivity : Activity() {
         visible = true
         StreamService.statusListener = { render(it) }
         render(StreamService.latestStatus)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updater.resumeIfPending()   // '이 출처 허용' 설정에서 돌아온 경우 설치 이어가기
     }
 
     override fun onStop() {

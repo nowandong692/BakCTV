@@ -210,5 +210,15 @@
             android:text="촬영 중에는 전원 버튼으로 화면을 꺼도 됩니다"
             android:textColor="#888888"
             android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/versionInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:padding="6dp"
+            android:textColor="#6E8BFF"
+            android:textSize="13sp" />
     </LinearLayout>
 </LinearLayout>
