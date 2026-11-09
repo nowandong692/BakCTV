@@ -471,7 +471,7 @@ async function startViewer() {
   };
   const scheduleRetry = (msg) => {
     $('remoteVideo').srcObject = null;
-    $('remoteAudio').srcObject = null;
+    stopRemoteAudio();
     stopMeter('view');
     hideMotion(); motionLabel = null; recOn = false; updateMotionInfo();
     stopFrameWatch();
@@ -504,7 +504,29 @@ async function startViewer() {
 
 let soundOn = true;   // 기본: 소리 켜짐
 function updateSoundBtn() { $('soundBtn').textContent = soundOn ? '🔊 소리 끄기' : '🔇 소리 켜기'; }
+
+// 안드로이드(크롬)는 <audio> 로 재생하면 다른 앱 음악을 멈추게 함 →
+// Web Audio 로 재생하면 음악과 함께 들림. 아이폰은 Web Audio 경로가 앱 전환 시 끊기는 문제가 있어 기존 방식 유지.
+const isIOSDevice = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let remoteRoute = null;   // { src, gain }
+
 function playRemoteAudio(stream) {
+  if (!isIOSDevice) {
+    ensureAudioCtx();
+    if (audioCtx && stream.getAudioTracks().length) {
+      if (remoteRoute) { try { remoteRoute.src.disconnect(); } catch (e) {} }
+      const src = audioCtx.createMediaStreamSource(stream);
+      const gain = audioCtx.createGain();
+      gain.gain.value = soundOn ? 1 : 0;
+      src.connect(gain); gain.connect(audioCtx.destination);
+      remoteRoute = { src, gain };
+      $('remoteAudio').srcObject = null;
+      // 크롬은 원격 소리가 화면의 video 요소에도 연결돼 있어야 Web Audio 로 흘러나옴 (video 는 음소거 상태로 유지)
+      updateSoundBtn();
+      return;
+    }
+  }
   const a = $('remoteAudio');
   a.srcObject = stream;
   a.muted = !soundOn;
@@ -513,14 +535,26 @@ function playRemoteAudio(stream) {
   });
   updateSoundBtn();
 }
+function stopRemoteAudio() {
+  if (remoteRoute) { try { remoteRoute.src.disconnect(); } catch (e) {} remoteRoute = null; }
+  $('remoteAudio').srcObject = null;
+}
 function toggleSound() {
   ensureAudioCtx();
-  const a = $('remoteAudio');
   soundOn = !soundOn;
-  a.muted = !soundOn;
-  a.play().catch(() => {});
+  if (remoteRoute) {
+    remoteRoute.gain.gain.value = soundOn ? 1 : 0;
+  } else {
+    const a = $('remoteAudio');
+    a.muted = !soundOn;
+    a.play().catch(() => {});
+  }
   updateSoundBtn();
 }
+// 다른 앱에 갔다 오면 Web Audio 가 멈춰 있을 수 있어 다시 켬
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+});
 
 // 말하기: 이 기기 마이크 → 촬영 기기 스피커
 let viewTarget = null, talkCall = null, talkStream = null;
@@ -713,7 +747,7 @@ function stopAll() {
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   $('localVideo').srcObject = null;
   $('remoteVideo').srcObject = null;
-  $('remoteAudio').srcObject = null;
+  stopRemoteAudio();
   stopMeter('cam'); stopMeter('view');
   hideMotion(); motionLabel = null; lastMotionAt = 0; updateMotionInfo();
   stopFrameWatch();
