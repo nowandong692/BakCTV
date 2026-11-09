@@ -8,8 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.MediaRecorder
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
@@ -178,8 +178,18 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             recorder = rec
             val adm = JavaAudioDeviceModule.builder(applicationContext)
                 .setSamplesReadyCallback { samples -> rec.onAudio(samples) }   // 녹화용 소리
-                .setUseHardwareAcousticEchoCanceler(true)
-                .setUseHardwareNoiseSuppressor(true)
+                // 통화 모드를 쓰지 않음 → 블루투스 음악이 끊기지 않음
+                // 마이크: 일반 녹음용(MIC), 말하기 소리: 미디어 소리로 재생 (음악과 함께 나옴)
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                // 하드웨어 반향 제거는 통화 모드 전용이라 끄고, WebRTC 소프트웨어 반향 제거 사용
+                .setUseHardwareAcousticEchoCanceler(false)
+                .setUseHardwareNoiseSuppressor(false)
                 .createAudioDeviceModule()
             val f = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm)
@@ -224,7 +234,6 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             val aSrc = f.createAudioSource(ac)
             audioSource = aSrc
             audioTrack = f.createAudioTrack("a0", aSrc)
-            setupSpeaker()
 
             main.post { previewSinks.forEach { videoTrack?.addSink(it) } }
         } catch (e: Exception) {
@@ -258,7 +267,6 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         textureHelper?.dispose(); textureHelper = null
         factory?.dispose(); factory = null
         eglBase?.release(); eglBase = null
-        restoreSpeaker()
     }
 
     // ---------------------------------------------------------------- 연결 서버 이벤트
@@ -578,31 +586,6 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     }
 
     fun eglContext(): EglBase.Context? = eglBase?.eglBaseContext
-
-    // ---------------------------------------------------------------- 스피커 (말하기 소리 크게)
-
-    private fun setupSpeaker() {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        am.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (Build.VERSION.SDK_INT >= 31) {
-            am.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                ?.let { am.setCommunicationDevice(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            am.isSpeakerphoneOn = true
-        }
-    }
-
-    private fun restoreSpeaker() {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        if (Build.VERSION.SDK_INT >= 31) {
-            am.clearCommunicationDevice()
-        } else {
-            @Suppress("DEPRECATION")
-            am.isSpeakerphoneOn = false
-        }
-        am.mode = AudioManager.MODE_NORMAL
-    }
 
     // ---------------------------------------------------------------- 상태 알림
 
