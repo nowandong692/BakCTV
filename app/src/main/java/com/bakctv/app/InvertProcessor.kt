@@ -20,6 +20,10 @@ class InvertProcessor : VideoProcessor {
     @Volatile var boost = 0
         set(v) { field = v; lutDirty = true }
     @Volatile var denoise = false
+    @Volatile var timestamp = true             // 촬영 폰 시각 새기기
+    /** 시각을 새기기 '전' 화면을 받을 곳 (움직임 감지기: 시계 숫자 변화를 움직임으로 오인하지 않게) */
+    var preSink: VideoSink? = null
+    private val overlay = TimestampOverlay()
 
     private var sink: VideoSink? = null
     private var lutDirty = true
@@ -37,7 +41,17 @@ class InvertProcessor : VideoProcessor {
         val inv = enabled
         val b = boost
         val dn = denoise
-        if (!inv && b == 0 && !dn) { out.onFrame(frame); return }
+        if (!inv && b == 0 && !dn) {
+            preSink?.onFrame(frame)
+            if (!timestamp) { out.onFrame(frame); return }
+            // 시각만 새기면 될 때: 복사 없이 바로 그림
+            val i420 = frame.buffer.toI420() ?: run { out.onFrame(frame); return }
+            try { overlay.apply(i420, frame.rotation) } catch (_: Exception) { }
+            val stamped = VideoFrame(i420, frame.rotation, frame.timestampNs)
+            out.onFrame(stamped)
+            stamped.release()
+            return
+        }
 
         buildLut(inv, b)
         val src = frame.buffer.toI420() ?: run { out.onFrame(frame); return }
@@ -53,6 +67,8 @@ class InvertProcessor : VideoProcessor {
         src.release()
 
         val processed = VideoFrame(dst, frame.rotation, frame.timestampNs)
+        preSink?.onFrame(processed)
+        if (timestamp) try { overlay.apply(dst, frame.rotation) } catch (_: Exception) { }
         out.onFrame(processed)
         processed.release()
     }

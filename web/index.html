@@ -66,6 +66,9 @@
   .motion-banner { display: none; position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
     background: #e5484de6; padding: 10px 18px; border-radius: 20px; font-size: 17px; font-weight: 700;
     white-space: nowrap; pointer-events: none; }
+  .freeze-banner { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #f2a33aee; color: #111; padding: 14px 20px; border-radius: 14px; font-size: 17px;
+    font-weight: 700; text-align: center; line-height: 1.5; pointer-events: none; }
   .motion-info { font-size: 13px; color: #ddd; }
   .proc-src { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
   #cover { display: none; position: fixed; inset: 0; z-index: 100; background: #000;
@@ -126,6 +129,7 @@
     <div id="motionFrame" class="motion-frame"></div>
     <div id="motionBox" class="motion-box"></div>
     <div id="motionBanner" class="motion-banner"></div>
+    <div id="freezeBanner" class="freeze-banner"></div>
     <div class="topbar">
       <div class="status"><span class="dot" id="viewDot"></span><span id="viewStatus">연결 중…</span><span class="meter" id="viewMeter"></span></div>
       <span id="motionInfo" class="motion-info"></span>
@@ -470,6 +474,7 @@ async function startViewer() {
     $('remoteAudio').srcObject = null;
     stopMeter('view');
     hideMotion(); motionLabel = null; recOn = false; updateMotionInfo();
+    stopFrameWatch();
     setViewStatus('대기 중', '', msg);
     clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, 3000);
@@ -480,6 +485,7 @@ async function startViewer() {
     call.answer();  // 영상은 받기만 함
     call.on('stream', (stream) => {
       $('remoteVideo').srcObject = stream;   // 영상은 video로
+      startFrameWatch();
       playRemoteAudio(stream);                // 소리는 별도 audio로
       startMeter(stream, $('viewMeter'), 'view');
       setViewStatus('실시간 보는 중', 'ok');
@@ -638,6 +644,55 @@ function toggleAlerts() {
   if (alertsOn) beep(1);   // 소리 확인용
 }
 
+/* ---------------- 영상 멈춤 감지 (보는 쪽) ---------------- */
+// 새 영상 장면이 3초 넘게 안 들어오면 경고 (촬영 폰 시각도 멈춰 보임)
+let lastFrameAt = 0, frozenWarned = false, freezeTimer = null, frameWatchOn = false;
+function startFrameWatch() {
+  const v = $('remoteVideo');
+  lastFrameAt = Date.now();
+  frozenWarned = false;
+  if (!frameWatchOn) {
+    frameWatchOn = true;
+    if (v.requestVideoFrameCallback) {
+      const cb = () => { if (!frameWatchOn) return; lastFrameAt = Date.now(); v.requestVideoFrameCallback(cb); };
+      v.requestVideoFrameCallback(cb);
+    } else {
+      let lastT = -1;
+      const poll = () => {
+        if (!frameWatchOn) return;
+        if (v.currentTime !== lastT) { lastT = v.currentTime; lastFrameAt = Date.now(); }
+        setTimeout(poll, 300);
+      };
+      poll();
+    }
+  }
+  clearInterval(freezeTimer);
+  freezeTimer = setInterval(checkFrozen, 1000);
+}
+function stopFrameWatch() {
+  frameWatchOn = false;
+  clearInterval(freezeTimer); freezeTimer = null;
+  $('freezeBanner').style.display = 'none';
+}
+function checkFrozen() {
+  if (document.hidden || !$('remoteVideo').srcObject) return;
+  const sec = Math.floor((Date.now() - lastFrameAt) / 1000);
+  const b = $('freezeBanner');
+  if (sec >= 3) {
+    b.innerHTML = `⚠ 영상이 멈췄어요 (${sec}초째)<br><span style="font-weight:500;font-size:14px">촬영 폰을 확인해 주세요</span>`;
+    b.style.display = 'block';
+    if (!frozenWarned) {
+      frozenWarned = true;
+      if (alertsOn) { beep(3); if (navigator.vibrate) navigator.vibrate([500, 200, 500]); }
+    }
+  } else if (b.style.display !== 'none') {
+    b.style.display = 'none';
+    frozenWarned = false;
+  }
+}
+// 다른 앱 갔다 돌아오면 바로 경고하지 않도록 시간 초기화
+document.addEventListener('visibilitychange', () => { if (!document.hidden) lastFrameAt = Date.now(); });
+
 function toggleFull() {
   const el = $('remoteVideo');
   if (document.fullscreenElement) document.exitFullscreen();
@@ -661,6 +716,7 @@ function stopAll() {
   $('remoteAudio').srcObject = null;
   stopMeter('cam'); stopMeter('view');
   hideMotion(); motionLabel = null; lastMotionAt = 0; updateMotionInfo();
+  stopFrameWatch();
   soundOn = true; updateSoundBtn();
   $('micBtn').textContent = '🎤 소리 켜짐';
   show('home');

@@ -202,6 +202,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             val vSrc = f.createVideoSource(false)
             videoSource = vSrc
             invert.enabled = getSharedPreferences("bakctv", MODE_PRIVATE).getBoolean("invert", false)
+            invert.preSink = detector
             vSrc.setVideoProcessor(invert)
             cap.initialize(helper, applicationContext, vSrc.capturerObserver)
             cap.setLowLight(lowLight)
@@ -210,7 +211,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
             val vt = f.createVideoTrack("v0", vSrc)
             videoTrack = vt
             detector.sensitivity = getSharedPreferences("bakctv", MODE_PRIVATE).getInt("motion", 2)
-            vt.addSink(detector)
+            // 감지기는 시각을 새기기 전 화면을 받음 (InvertProcessor.preSink)
             vt.addSink(rec)
             updateRecorderActive()
 
@@ -244,7 +245,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         signaling?.close(); signaling = null
         conns.values.toList().forEach { closeConn(it.id) }
         val vt = videoTrack
-        try { vt?.removeSink(detector) } catch (_: Exception) { }
+        invert.preSink = null
         recorder?.let { r -> try { vt?.removeSink(r) } catch (_: Exception) { }; r.release() }
         recorder = null
         main.post { previewSinks.forEach { s -> try { vt?.removeSink(s) } catch (_: Exception) { } } }
