@@ -139,13 +139,7 @@ class MotionRecorder(
         if (target != null) finishFile()
         active = false
         h.removeCallbacks(tick)
-        try { vEgl?.makeCurrent() } catch (_: Exception) { }
-        glDrawer?.release(); glDrawer = null
-        frameDrawer?.release(); frameDrawer = null
-        try { vEnc?.stop() } catch (_: Exception) { }
-        vEnc?.release(); vEnc = null
-        vEgl?.release(); vEgl = null
-        vSurface?.release(); vSurface = null
+        releaseVideoEncoder()
         try { aEnc?.stop() } catch (_: Exception) { }
         aEnc?.release(); aEnc = null
         vFormat = null; aFormat = null
@@ -157,9 +151,19 @@ class MotionRecorder(
 
     private fun encodeFrame(frame: VideoFrame) {
         if (!active) return
+        val fw = frame.rotatedWidth / 2 * 2
+        val fh = frame.rotatedHeight / 2 * 2
+        if (vEnc != null && (fw != vw || fh != vh)) {
+            // 폰 방향이 바뀜(세로↔가로): 지금 파일을 마무리하고 새 크기로 다시 시작
+            val wasMotion = motionOn
+            if (target != null) finishFile()
+            releaseVideoEncoder()
+            ring.clear()
+            motionOn = wasMotion
+        }
         if (vEnc == null) {
-            vw = frame.rotatedWidth / 2 * 2
-            vh = frame.rotatedHeight / 2 * 2
+            vw = fw
+            vh = fh
             createVideoEncoder()
         }
         val egl = vEgl ?: return
@@ -169,6 +173,17 @@ class MotionRecorder(
         frameDrawer!!.drawFrame(frame, glDrawer!!, null, 0, 0, vw, vh)
         egl.swapBuffers(System.nanoTime())
         drainVideo()
+    }
+
+    private fun releaseVideoEncoder() {
+        try { vEgl?.makeCurrent() } catch (_: Exception) { }
+        glDrawer?.release(); glDrawer = null
+        frameDrawer?.release(); frameDrawer = null
+        try { vEnc?.stop() } catch (_: Exception) { }
+        vEnc?.release(); vEnc = null
+        vEgl?.release(); vEgl = null
+        vSurface?.release(); vSurface = null
+        vFormat = null
     }
 
     private fun createVideoEncoder() {

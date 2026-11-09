@@ -15,6 +15,7 @@ import android.hardware.camera2.CaptureRequest
 import android.os.Handler
 import android.util.Range
 import android.util.Size
+import android.view.OrientationEventListener
 import android.view.Surface
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -59,6 +60,10 @@ class BakCameraCapturer(
 
     private var wantFront = false
 
+    // 폰이 실제로 놓인 방향 (기울기 센서). 화면 회전 잠금·화면 꺼짐과 상관없이 동작
+    @Volatile private var physicalOrientation = 0   // 0, 90, 180, 270 (시계 방향으로 돌린 각도)
+    private var orientationListener: OrientationEventListener? = null
+
     override fun initialize(helper: SurfaceTextureHelper, context: Context, observer: CapturerObserver) {
         this.helper = helper
         this.context = context.applicationContext
@@ -69,10 +74,26 @@ class BakCameraCapturer(
 
     override fun startCapture(width: Int, height: Int, framerate: Int) {
         reqW = width; reqH = height
+        startOrientation()
         handler.post { open() }
     }
 
+    private fun startOrientation() {
+        if (orientationListener != null) return
+        orientationListener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(deg: Int) {
+                if (deg == ORIENTATION_UNKNOWN) return          // 바닥에 평평하게 놓임 → 마지막 방향 유지
+                val cur = physicalOrientation
+                // 현재 방향에서 60도 이상 벗어나야 바꿈 (경계에서 왔다 갔다 하지 않게)
+                val diff = abs(((deg - cur + 540) % 360) - 180)
+                if (diff < 60) return
+                physicalOrientation = ((deg + 45) / 90 * 90) % 360
+            }
+        }.also { if (it.canDetectOrientation()) it.enable() }
+    }
+
     override fun stopCapture() {
+        orientationListener?.disable(); orientationListener = null
         runAndWait { close(); if (listening) { helper.stopListening(); listening = false } }
         observer.onCapturerStopped()
     }
@@ -262,7 +283,9 @@ class BakCameraCapturer(
     }
 
     private fun frameOrientation(): Int {
-        var rotation = CameraSession.getDeviceOrientation(context)
+        // WebRTC 는 '화면 회전 각도'를 쓰는데, 기울기 센서 각도와는 방향이 반대 → 360 에서 뺌
+        var rotation = if (orientationListener != null) (360 - physicalOrientation) % 360
+                       else CameraSession.getDeviceOrientation(context)
         if (!front) rotation = 360 - rotation
         return (sensorOrientation + rotation) % 360
     }
