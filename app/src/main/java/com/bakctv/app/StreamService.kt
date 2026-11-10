@@ -113,6 +113,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
     private var recordOn = true
     private var recording = false
     private var lastSaved: String? = null
+    private var lastSentViewers = -1
     private var front = false
     private var micOn = true
     private var lastText = "준비 중…"
@@ -467,6 +468,10 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         if (signaling != null) {
             lastText = if (viewers == 0) "촬영 중 · 시청 대기" else "촬영 중"
         }
+        if (viewers != lastSentViewers) {
+            lastSentViewers = viewers
+            broadcast(JSONObject().put("t", "viewers").put("n", viewers))
+        }
         publish(Status(true, lastText, viewers, talking, front, micOn, invert.enabled,
             detector.sensitivity, motionActive, lastMotionAt, recordOn, recording, lastSaved,
             lowLight, capturer?.manualSupported ?: true, invert.boost, denoise))
@@ -544,6 +549,7 @@ class StreamService : Service(), PeerJsSignaling.Listener {
         .put("label", MotionDetector.LABELS[detector.sensitivity])
         .put("active", motionActive)
         .put("rec", recording)
+        .put("viewers", conns.values.filter { it.type == "media" && !it.isTalk }.map { it.peer }.toSet().size)
 
     private fun broadcast(msg: JSONObject) {
         conns.values.mapNotNull { it.dc }.forEach { sendTo(it, msg) }

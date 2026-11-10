@@ -250,7 +250,11 @@ function setCamStatus(text, cls) {
   $('camStatus').textContent = text;
   $('camDot').className = 'dot' + (cls ? ' ' + cls : '');
 }
-function updateViewerCount() { $('viewerCount').textContent = `시청 ${calls.size}명`; }
+const viewerConns = new Set();   // 시청자에게 정보를 보내는 통로
+function updateViewerCount() {
+  $('viewerCount').textContent = `시청 ${calls.size}명`;
+  viewerConns.forEach(c => { try { if (c.open) c.send({ t: 'viewers', n: calls.size }); } catch (e) {} });
+}
 
 async function startCamera() {
   const code = getCode(); if (!code) return;
@@ -275,11 +279,12 @@ async function startCamera() {
   // 시청자가 접속하면 → 영상을 보내준다
   peer.on('connection', (conn) => {
     conn.on('open', () => {
+      viewerConns.add(conn);
       const call = peer.call(conn.peer, outStream());
       calls.add(call); updateViewerCount();
       const drop = () => { calls.delete(call); updateViewerCount(); };
       call.on('close', drop); call.on('error', drop);
-      conn.on('close', () => { call.close(); drop(); });
+      conn.on('close', () => { viewerConns.delete(conn); call.close(); drop(); });
     });
   });
 
@@ -474,7 +479,7 @@ async function startViewer() {
     $('remoteVideo').srcObject = null;
     stopRemoteAudio();
     stopMeter('view');
-    hideMotion(); motionLabel = null; recOn = false; updateMotionInfo();
+    hideMotion(); motionLabel = null; recOn = false; viewersN = null; updateMotionInfo();
     stopFrameWatch();
     setViewStatus('대기 중', '', msg);
     clearTimeout(retryTimer);
@@ -707,7 +712,7 @@ function cycleVoice() {
 /* ---------------- 움직임 알림 (보는 쪽) ---------------- */
 let alertsOn = true;
 try { alertsOn = localStorage.getItem('fcam-alerts') !== '0'; } catch (e) {}
-let motionLabel = null, lastMotionAt = 0, lastBox = null, recOn = false;
+let motionLabel = null, lastMotionAt = 0, lastBox = null, recOn = false, viewersN = null;
 const fmtTime = (t) => new Date(t).toLocaleTimeString('ko-KR', { hour12: false });
 
 function handleCamData(d) {
@@ -717,12 +722,16 @@ function handleCamData(d) {
     if (typeof m === 'string') m = JSON.parse(m);
   } catch (e) { return; }
   if (!m || typeof m !== 'object') return;
-  if (m.t === 'rec') {
+  if (m.t === 'viewers') {
+    viewersN = m.n;
+    updateMotionInfo();
+  } else if (m.t === 'rec') {
     recOn = !!m.on;
     updateMotionInfo();
   } else if (m.t === 'hello') {
     motionLabel = m.label || null;
     recOn = !!m.rec;
+    if (typeof m.viewers === 'number') viewersN = m.viewers;
     if (!m.active) hideMotion();
     updateMotionInfo();
   } else if (m.t === 'motion') {
@@ -766,9 +775,10 @@ function positionBox() {
 window.addEventListener('resize', positionBox);
 
 function updateMotionInfo() {
-  let t = recOn ? '🔴 녹화 중 · ' : '';
+  let t = (viewersN ? `👀 ${viewersN}명 시청 중 · ` : '') + (recOn ? '🔴 녹화 중 · ' : '');
   if (motionLabel) t += '👁 ' + motionLabel;
-  if (lastMotionAt) t += (t ? ' · ' : '') + '마지막 ' + fmtTime(lastMotionAt);
+  if (lastMotionAt) t += (t && !t.endsWith(' · ') ? ' · ' : '') + '마지막 ' + fmtTime(lastMotionAt);
+  t = t.replace(/ · $/, '');
   $('motionInfo').textContent = t;
 }
 
@@ -873,7 +883,7 @@ function stopAll() {
   $('remoteVideo').srcObject = null;
   stopRemoteAudio();
   stopMeter('cam'); stopMeter('view');
-  hideMotion(); motionLabel = null; lastMotionAt = 0; updateMotionInfo();
+  hideMotion(); motionLabel = null; lastMotionAt = 0; viewersN = null; updateMotionInfo();
   stopFrameWatch();
   soundOn = true; updateSoundBtn();
   $('micBtn').textContent = '🎤 소리 켜짐';
