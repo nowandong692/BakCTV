@@ -1,5 +1,5 @@
 // 가족 캠 서비스 워커
-const CACHE = 'family-cam-v19';
+const CACHE = 'family-cam-v20';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png', './bg-default.jpg',
