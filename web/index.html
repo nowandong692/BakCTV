@@ -88,9 +88,8 @@
   #viewScreen.waiting .msg { align-items: flex-start; padding-top: 64px; }
   #viewScreen.waiting .msg-text { background: #000b; color: #fff; padding: 12px 18px; border-radius: 14px; }
   .msg-text { white-space: pre-line; }
-  #bgBtn, #bgResetBtn { display: none; }
-  #viewScreen.waiting #bgBtn { display: inline-block; }
-  #viewScreen.waiting.custom-bg #bgResetBtn { display: inline-block; }
+  #bgResetBtn { display: none; }
+  #viewScreen.custom-bg #bgResetBtn { display: inline-block; }
   .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 24px; color: #aaa; font-size: 16px; line-height: 1.6; pointer-events: none; }
 </style>
@@ -898,6 +897,7 @@ function pickBg(file) {
     try { localStorage.setItem('fcam-bg', c.toDataURL('image/jpeg', 0.8)); }
     catch (e) { alert('사진이 너무 커서 저장하지 못했어요. 다른 사진을 골라 주세요.'); return; }
     applyBg();
+    if (!$('viewScreen').classList.contains('waiting')) alert('배경을 바꿨어요. 촬영 중인 기기가 없을 때 보입니다.');
   };
   img.onerror = () => { URL.revokeObjectURL(url); alert('이 사진은 쓸 수 없어요.'); };
   img.src = url;

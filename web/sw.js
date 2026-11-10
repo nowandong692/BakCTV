@@ -1,5 +1,5 @@
 // 가족 캠 서비스 워커
-const CACHE = 'family-cam-v18';
+const CACHE = 'family-cam-v19';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png', './bg-default.jpg',
@@ -26,8 +26,10 @@ self.addEventListener('activate', (e) => {
 // 네트워크 우선, 실패하면 저장본
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  // 화면(HTML)은 브라우저 캐시를 거치지 않고 항상 최신으로 받음 (GitHub Pages 10분 캐시 회피)
+  const req = (e.request.mode === 'navigate') ? new Request(e.request, { cache: 'no-store' }) : e.request;
   e.respondWith(
-    fetch(e.request)
+    fetch(req)
       .then((res) => {
         if (res.ok && (e.request.url.startsWith(self.location.origin) || e.request.url.includes('peerjs'))) {
           const copy = res.clone();
