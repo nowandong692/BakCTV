@@ -85,8 +85,9 @@
   #viewScreen.waiting .stage { background-color: #ffe9a8; background-image: var(--wait-bg, url('bg-default.jpg')); }
   #viewScreen.waiting.custom-bg .stage { background-color: #000; background-size: cover; }
   #viewScreen.waiting #remoteVideo { visibility: hidden; }
-  #viewScreen.waiting .msg { align-items: flex-end; padding-bottom: 130px; }
+  #viewScreen.waiting .msg { align-items: flex-start; padding-top: 64px; }
   #viewScreen.waiting .msg-text { background: #000b; color: #fff; padding: 12px 18px; border-radius: 14px; }
+  .msg-text { white-space: pre-line; }
   #bgBtn, #bgResetBtn { display: none; }
   #viewScreen.waiting #bgBtn { display: inline-block; }
   #viewScreen.waiting.custom-bg #bgResetBtn { display: inline-block; }
