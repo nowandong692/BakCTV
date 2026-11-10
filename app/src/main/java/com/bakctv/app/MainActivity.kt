@@ -155,7 +155,8 @@ class MainActivity : Activity() {
         mic.isEnabled = running
         invertBtn.isEnabled = running
         invertBtn.text = if (s.inverted) "🎨 반전 켜짐" else "🎨 색상 반전"
-        startStop.text = if (running) "■ 촬영 종료" else "이 기기로 촬영하기"
+        startStop.text = if (running) "■ 촬영 종료" else "● 이 기기로 촬영하기"
+        if (running) startStop.isEnabled = true
         mic.text = if (s.micOn) "🎤 소리 켜짐" else "🔇 소리 꺼짐"
         status.text = when {
             running -> "● " + s.text
@@ -190,6 +191,7 @@ class MainActivity : Activity() {
         if (running && visible) attachPreview() else detachPreview()
         if (previewAttached) preview.setMirror(s.frontCamera)
         if (!running) checkCode()
+        styleStartStop(running)
     }
 
     private fun checkCode() {
@@ -199,6 +201,18 @@ class MainActivity : Activity() {
         codeCheck.text = if (p == null) "✔ 사용할 수 있는 코드예요" else "⚠ $p"
         codeCheck.setTextColor(if (p == null) 0xFF30A46C.toInt() else 0xFFF2A33A.toInt())
         startStop.isEnabled = p == null
+        styleStartStop(false)
+    }
+
+    /** 촬영 시작(초록) / 촬영 종료(빨강) / 누를 수 없음(회색) 으로 색 구분 */
+    private fun styleStartStop(running: Boolean) {
+        val color = when {
+            running -> 0xFFE5484D.toInt()            // 빨강: 촬영 종료
+            startStop.isEnabled -> 0xFF30A46C.toInt() // 초록: 촬영 시작
+            else -> 0xFF4A4A4A.toInt()               // 회색: 방 코드를 먼저 입력
+        }
+        startStop.backgroundTintList = android.content.res.ColorStateList.valueOf(color)
+        startStop.setTextColor(if (startStop.isEnabled) 0xFFFFFFFF.toInt() else 0xFF9A9A9A.toInt())
     }
 
     private fun attachPreview() {

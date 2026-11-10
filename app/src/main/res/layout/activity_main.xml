@@ -98,8 +98,8 @@
             android:id="@+id/startStop"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:backgroundTint="#E5484D"
-            android:text="이 기기로 촬영하기"
+            android:backgroundTint="#30A46C"
+            android:text="● 이 기기로 촬영하기"
             android:textColor="#FFFFFF"
             android:textSize="18sp" />
 
