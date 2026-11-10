@@ -23,6 +23,7 @@ object ClipStorage {
 
     private const val FOLDER = "박CTV"
     private const val CAP_BYTES = 2L * 1024 * 1024 * 1024   // 2GB 넘으면 오래된 것부터 삭제
+    private const val CAP_COUNT = 100                        // 100개 넘으면 오래된 것부터 삭제
 
     class Target(val muxer: MediaMuxer, val name: String, val finish: (ok: Boolean) -> Unit)
 
@@ -69,7 +70,7 @@ object ClipStorage {
         }
     }
 
-    /** 전체 용량이 2GB 를 넘으면 오래된 영상부터 삭제 */
+    /** 영상이 100개를 넘거나 전체 용량이 2GB 를 넘으면 오래된 영상부터 삭제 */
     fun enforceCap(ctx: Context) {
         try {
             if (Build.VERSION.SDK_INT >= 29) capMediaStore(ctx) else capFiles(ctx)
@@ -83,9 +84,11 @@ object ClipStorage {
         ).flatMap { it.listFiles { f -> f.name.endsWith(".mp4") }?.toList() ?: emptyList() }
             .sortedBy { it.lastModified() }
         var total = files.sumOf { it.length() }
+        var count = files.size
         for (f in files) {
-            if (total <= CAP_BYTES) break
+            if (total <= CAP_BYTES && count <= CAP_COUNT) break
             total -= f.length()
+            count--
             if (f.delete()) MediaScannerConnection.scanFile(ctx, arrayOf(f.absolutePath), null, null)
         }
     }
@@ -103,9 +106,11 @@ object ClipStorage {
             while (c.moveToNext()) items += c.getLong(0) to c.getLong(1)
         }
         var total = items.sumOf { it.second }
+        var count = items.size
         for ((id, size) in items) {
-            if (total <= CAP_BYTES) break
+            if (total <= CAP_BYTES && count <= CAP_COUNT) break
             total -= size
+            count--
             cr.delete(ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id), null, null)
         }
     }
