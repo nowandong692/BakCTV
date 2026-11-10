@@ -5,7 +5,7 @@
 
 - **웹 주소**: https://nowandong692.github.io/BakCTV/ (대소문자 그대로 입력)
 - **촬영 폰용 APK**: https://github.com/nowandong692/BakCTV/releases/latest/download/BakCTV.apk
-- **변경 이력**: [CHANGELOG.md](CHANGELOG.md)
+- **변경 이력**: [CHANGELOG.md](CHANGELOG.md) · **주요 결정 사항**: [DECISIONS.md](DECISIONS.md)
 
 ## 어떤 폰에 무엇을 설치하나요?
 
