@@ -199,7 +199,7 @@
             android:layout_height="52dp"
             android:layout_marginTop="8dp"
             android:backgroundTint="#3E63DD"
-            android:text="다른 기기 영상 보기 (웹)"
+            android:text="다른 기기 영상 보기"
             android:textColor="#FFFFFF" />
 
         <TextView

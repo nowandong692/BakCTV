@@ -97,7 +97,10 @@ class MainActivity : Activity() {
         }
 
         findViewById<Button>(R.id.openWeb).setOnClickListener {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.app_url))))
+            // 저장된 방 코드를 쓰도록, 지금 입력칸의 코드가 올바르면 먼저 저장
+            val c = code.text.toString().trim()
+            if (c.isNotEmpty() && RoomCode.problem(c) == null) prefs.edit().putString("code", c).apply()
+            startActivity(Intent(this, ViewerActivity::class.java))
         }
     }
 
