@@ -1,8 +1,8 @@
 // 가족 캠 서비스 워커
-const CACHE = 'family-cam-v17';
+const CACHE = 'family-cam-v18';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest',
-  './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png',
+  './icon-192.png', './icon-512.png', './icon-maskable.png', './apple-touch-icon.png', './bg-default.jpg',
   'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js'
 ];
 

@@ -3,7 +3,10 @@ package com.bakctv.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.webkit.ValueCallback
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -28,6 +31,7 @@ class ViewerActivity : Activity() {
     private var fullscreenView: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     private var autoStarted = false
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,6 +65,18 @@ class ViewerActivity : Activity() {
                         pendingPermission = request
                         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
                     }
+                }
+            }
+            // 🖼 배경 바꾸기: 갤러리에서 사진 고르기
+            override fun onShowFileChooser(
+                view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams,
+            ): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                return try {
+                    startActivityForResult(params.createIntent(), REQ_FILE); true
+                } catch (_: Exception) {
+                    fileCallback = null; false
                 }
             }
             // ⛶ 전체화면
@@ -104,6 +120,14 @@ class ViewerActivity : Activity() {
         web.evaluateJavascript(js, null)
     }
 
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_FILE) return
+        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data))
+        fileCallback = null
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_MIC) return
@@ -126,5 +150,6 @@ class ViewerActivity : Activity() {
 
     companion object {
         private const val REQ_MIC = 2
+        private const val REQ_FILE = 3
     }
 }

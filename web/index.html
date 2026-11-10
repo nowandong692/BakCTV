@@ -80,6 +80,16 @@
   .meter { font-size: 13px; letter-spacing: -1px; color: #7ee2a8; margin-left: 6px; }
   .talk-badge { display: none; position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
     background: #30a46ce6; padding: 10px 18px; border-radius: 20px; font-size: 16px; font-weight: 600; }
+  /* 기다리는 동안 배경 이미지 */
+  #viewScreen .stage { background: #000 center / contain no-repeat; }
+  #viewScreen.waiting .stage { background-color: #ffe9a8; background-image: var(--wait-bg, url('bg-default.jpg')); }
+  #viewScreen.waiting.custom-bg .stage { background-color: #000; background-size: cover; }
+  #viewScreen.waiting #remoteVideo { visibility: hidden; }
+  #viewScreen.waiting .msg { align-items: flex-end; padding-bottom: 130px; }
+  #viewScreen.waiting .msg-text { background: #000b; color: #fff; padding: 12px 18px; border-radius: 14px; }
+  #bgBtn, #bgResetBtn { display: none; }
+  #viewScreen.waiting #bgBtn { display: inline-block; }
+  #viewScreen.waiting.custom-bg #bgResetBtn { display: inline-block; }
   .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 24px; color: #aaa; font-size: 16px; line-height: 1.6; pointer-events: none; }
 </style>
@@ -125,7 +135,8 @@
   <div class="stage">
     <video id="remoteVideo" autoplay playsinline muted></video>
     <audio id="remoteAudio" autoplay playsinline></audio>
-    <div class="msg" id="viewMsg">촬영 기기를 찾는 중…</div>
+    <div class="msg" id="viewMsg"><span class="msg-text" id="viewMsgText">촬영 기기를 찾는 중…</span></div>
+    <input type="file" id="bgFile" accept="image/*" hidden>
     <div id="motionFrame" class="motion-frame"></div>
     <div id="motionBox" class="motion-box"></div>
     <div id="motionBanner" class="motion-banner"></div>
@@ -141,6 +152,8 @@
       <button class="ctrl" id="voiceBtn">🎭 목소리: 그대로</button>
       <button class="ctrl" id="invertBtn">🎨 색상 반전</button>
       <button class="ctrl" id="fullBtn">⛶ 전체화면</button>
+      <button class="ctrl" id="bgBtn">🖼 배경 바꾸기</button>
+      <button class="ctrl" id="bgResetBtn">↺ 기본 배경</button>
       <button class="ctrl danger" id="stopView">■ 나가기</button>
     </div>
   </div>
@@ -451,8 +464,9 @@ $('cover').addEventListener('pointerdown', (e) => {
 function setViewStatus(text, cls, msg) {
   $('viewStatus').textContent = text;
   $('viewDot').className = 'dot' + (cls ? ' ' + cls : '');
-  $('viewMsg').textContent = msg || '';
+  $('viewMsgText').textContent = msg || '';
   $('viewMsg').style.display = msg ? 'flex' : 'none';
+  $('viewScreen').classList.toggle('waiting', !!msg);   // 영상이 없을 때 배경 이미지
 }
 
 async function startViewer() {
@@ -860,6 +874,37 @@ function checkFrozen() {
 }
 // 다른 앱 갔다 돌아오면 바로 경고하지 않도록 시간 초기화
 document.addEventListener('visibilitychange', () => { if (!document.hidden) lastFrameAt = Date.now(); });
+
+/* ---------------- 기다리는 동안 배경 이미지 ---------------- */
+function applyBg() {
+  let data = null;
+  try { data = localStorage.getItem('fcam-bg'); } catch (e) {}
+  const vs = $('viewScreen');
+  if (data) { vs.style.setProperty('--wait-bg', `url("${data}")`); vs.classList.add('custom-bg'); }
+  else { vs.style.removeProperty('--wait-bg'); vs.classList.remove('custom-bg'); }
+}
+// 고른 사진을 적당한 크기(긴 변 1280px)로 줄여 이 기기에 저장
+function pickBg(file) {
+  if (!file) return;
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const sc = Math.min(1, 1280 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    try { localStorage.setItem('fcam-bg', c.toDataURL('image/jpeg', 0.8)); }
+    catch (e) { alert('사진이 너무 커서 저장하지 못했어요. 다른 사진을 골라 주세요.'); return; }
+    applyBg();
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert('이 사진은 쓸 수 없어요.'); };
+  img.src = url;
+}
+$('bgBtn').onclick = () => $('bgFile').click();
+$('bgFile').onchange = (e) => { pickBg(e.target.files[0]); e.target.value = ''; };
+$('bgResetBtn').onclick = () => { try { localStorage.removeItem('fcam-bg'); } catch (e) {} applyBg(); };
+applyBg();
 
 function toggleFull() {
   const el = $('remoteVideo');
