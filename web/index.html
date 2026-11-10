@@ -111,8 +111,8 @@
 <!-- 촬영 화면 -->
 <div id="camScreen" class="screen">
   <div class="stage">
-    <video id="localVideo" autoplay playsinline muted></video>
-    <video id="procSrc" class="proc-src" autoplay playsinline muted></video>
+    <video id="localVideo" poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" autoplay playsinline muted></video>
+    <video id="procSrc" poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" class="proc-src" autoplay playsinline muted></video>
     <div class="topbar">
       <div class="status"><span class="dot" id="camDot"></span><span id="camStatus">준비 중…</span><span class="meter" id="camMeter"></span></div>
       <span id="viewerCount">시청 0명</span>
@@ -133,7 +133,7 @@
 <!-- 모니터 화면 -->
 <div id="viewScreen" class="screen">
   <div class="stage">
-    <video id="remoteVideo" autoplay playsinline muted></video>
+    <video id="remoteVideo" poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" autoplay playsinline muted></video>
     <audio id="remoteAudio" autoplay playsinline></audio>
     <div class="msg" id="viewMsg"><span class="msg-text" id="viewMsgText">촬영 기기를 찾는 중…</span></div>
     <input type="file" id="bgFile" accept="image/*" hidden>
@@ -472,6 +472,8 @@ function setViewStatus(text, cls, msg) {
 async function startViewer() {
   const code = getCode(); if (!code) return;
   ensureAudioCtx();
+  // 화면을 띄우기 전에 대기 상태(배경 이미지)로 먼저 맞춤 → 빈 영상 칸이 보이지 않게
+  setViewStatus('연결 중…', '', '촬영 기기를 찾는 중…');
   show('viewScreen');
   keepAwake();
   const target = await roomId(code);
