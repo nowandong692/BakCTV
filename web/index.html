@@ -70,9 +70,11 @@
     background: #f2a33aee; color: #111; padding: 14px 20px; border-radius: 14px; font-size: 17px;
     font-weight: 700; text-align: center; line-height: 1.5; pointer-events: none; }
   /* 전체화면: 버튼·상태 줄 숨김 (움직임·멈춤 경고는 유지) */
-  #viewScreen:fullscreen .controls, #viewScreen:fullscreen .topbar { display: none; }
-  #viewScreen:-webkit-full-screen .controls, #viewScreen:-webkit-full-screen .topbar { display: none; }
-  #viewScreen:fullscreen .zoom-badge { bottom: 24px; }
+  #viewScreen.fs .controls, #viewScreen.fs .topbar,
+  #viewScreen:fullscreen .controls, #viewScreen:fullscreen .topbar,
+  #viewScreen:-webkit-full-screen .controls, #viewScreen:-webkit-full-screen .topbar { display: none !important; }
+  #viewScreen.fs .zoom-badge { bottom: 24px; }
+  #viewScreen.fs { position: fixed; inset: 0; z-index: 50; background: #000; }
   .zoom-wrap { position: absolute; inset: 0; transform-origin: 0 0; touch-action: none; will-change: transform; }
   .zoom-badge { display: none; position: absolute; left: 12px; bottom: 150px; background: #000a; color: #fff;
     padding: 6px 12px; border-radius: 14px; font-size: 13px; pointer-events: none; }
@@ -919,26 +921,51 @@ $('bgFile').onchange = (e) => { pickBg(e.target.files[0]); e.target.value = ''; 
 $('bgResetBtn').onclick = () => { try { localStorage.removeItem('fcam-bg'); } catch (e) {} applyBg(); };
 applyBg();
 
-function toggleFull() {
-  // 화면 전체(버튼·확대 포함)를 전체화면으로. 아이폰은 영상만 전체화면 가능
+/* ---------------- 전체화면 ----------------
+ * ⛶ 를 누르면 박CTV 가 직접 버튼을 숨기고(.fs), 휴대폰 전체화면은 되면 추가로 사용.
+ * 뒤로 가기(어느 경우든)로 나옴: 방문 기록에 한 칸 넣어 두고, 뒤로 가기 = 전체화면 해제 */
+let fsOn = false;
+function toggleFull() { if (fsOn) exitFs(); else enterFs(); }
+
+async function enterFs() {
+  if (fsOn) return;
+  fsOn = true;
+  resetZoom();
+  $('viewScreen').classList.add('fs');
+  try { history.pushState({ bakctvFs: 1 }, ''); } catch (e) {}
   const el = $('viewScreen');
-  if (document.fullscreenElement) document.exitFullscreen();
-  else if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-  else if ($('remoteVideo').webkitEnterFullscreen) $('remoteVideo').webkitEnterFullscreen(); // iPhone
+  try {
+    if (el.requestFullscreen) await el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } catch (e) { /* 안 되면 박CTV 화면 안에서만 전체화면 */ }
+  const v = $('remoteVideo');
+  const landscape = !v.videoWidth || v.videoWidth >= v.videoHeight;
+  try { await screen.orientation.lock(landscape ? 'landscape' : 'portrait'); } catch (e) {}
+  showBadge('뒤로 가기를 누르면 전체화면에서 나가요', 2500);
+  setTimeout(() => applyZoom(false), 300);
 }
 
-// 전체화면 들어갈 때: 영상 방향에 맞춰 화면 돌리기 + 나가는 방법 안내
-document.addEventListener('fullscreenchange', async () => {
+function exitFs(fromHistory = false) {
+  if (!fsOn) return;
+  fsOn = false;
+  $('viewScreen').classList.remove('fs');
   resetZoom();
-  if (document.fullscreenElement) {
-    const v = $('remoteVideo');
-    const landscape = !v.videoWidth || v.videoWidth >= v.videoHeight;
-    try { await screen.orientation.lock(landscape ? 'landscape' : 'portrait'); } catch (e) {}
-    showBadge('뒤로 가기를 누르면 전체화면에서 나가요', 2500);
-  } else {
-    try { screen.orientation.unlock(); } catch (e) {}
-  }
-});
+  try { screen.orientation.unlock(); } catch (e) {}
+  const fe = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fe) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} }
+  if (!fromHistory && history.state && history.state.bakctvFs) { try { history.back(); } catch (e) {} }
+  setTimeout(() => applyZoom(false), 300);
+}
+
+// 뒤로 가기
+window.addEventListener('popstate', () => { if (fsOn) exitFs(true); });
+// 휴대폰이 전체화면을 스스로 끝낸 경우 (시스템 뒤로 가기 등)
+const onFsChange = () => {
+  const fe = document.fullscreenElement || document.webkitFullscreenElement;
+  if (!fe && fsOn) exitFs();
+};
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
 function showBadge(text, ms) {
   const b = $('zoomBadge');
   b.textContent = text; b.style.display = 'block';
@@ -1049,6 +1076,7 @@ function stopAll() {
   stopRemoteAudio();
   stopMeter('cam'); stopMeter('view');
   hideMotion(); motionLabel = null; lastMotionAt = 0; viewersN = null; updateMotionInfo();
+  if (fsOn) exitFs();
   resetZoom();
   stopFrameWatch();
   soundOn = true; updateSoundBtn();

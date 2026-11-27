@@ -149,6 +149,7 @@ class ViewerActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (fullscreenView != null) { web.webChromeClient?.onHideCustomView(); return }
+        if (web.canGoBack()) { web.goBack(); return }   // 박CTV 화면 안 전체화면 해제
         finish()
     }
 
