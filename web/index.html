@@ -69,6 +69,10 @@
   .freeze-banner { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     background: #f2a33aee; color: #111; padding: 14px 20px; border-radius: 14px; font-size: 17px;
     font-weight: 700; text-align: center; line-height: 1.5; pointer-events: none; }
+  /* 전체화면: 버튼·상태 줄 숨김 (움직임·멈춤 경고는 유지) */
+  #viewScreen:fullscreen .controls, #viewScreen:fullscreen .topbar { display: none; }
+  #viewScreen:-webkit-full-screen .controls, #viewScreen:-webkit-full-screen .topbar { display: none; }
+  #viewScreen:fullscreen .zoom-badge { bottom: 24px; }
   .zoom-wrap { position: absolute; inset: 0; transform-origin: 0 0; touch-action: none; will-change: transform; }
   .zoom-badge { display: none; position: absolute; left: 12px; bottom: 150px; background: #000a; color: #fff;
     padding: 6px 12px; border-radius: 14px; font-size: 13px; pointer-events: none; }
@@ -921,6 +925,25 @@ function toggleFull() {
   if (document.fullscreenElement) document.exitFullscreen();
   else if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
   else if ($('remoteVideo').webkitEnterFullscreen) $('remoteVideo').webkitEnterFullscreen(); // iPhone
+}
+
+// 전체화면 들어갈 때: 영상 방향에 맞춰 화면 돌리기 + 나가는 방법 안내
+document.addEventListener('fullscreenchange', async () => {
+  resetZoom();
+  if (document.fullscreenElement) {
+    const v = $('remoteVideo');
+    const landscape = !v.videoWidth || v.videoWidth >= v.videoHeight;
+    try { await screen.orientation.lock(landscape ? 'landscape' : 'portrait'); } catch (e) {}
+    showBadge('뒤로 가기를 누르면 전체화면에서 나가요', 2500);
+  } else {
+    try { screen.orientation.unlock(); } catch (e) {}
+  }
+});
+function showBadge(text, ms) {
+  const b = $('zoomBadge');
+  b.textContent = text; b.style.display = 'block';
+  clearTimeout(badgeTimer);
+  badgeTimer = setTimeout(() => { b.style.display = 'none'; }, ms);
 }
 
 /* ---------------- 핀치 줌 (보는 화면) ---------------- */

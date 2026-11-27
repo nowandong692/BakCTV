@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.webkit.ValueCallback
@@ -88,6 +89,14 @@ class ViewerActivity : Activity() {
                 @Suppress("DEPRECATION")
                 window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN
                     or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+                // 영상이 가로면 가로 화면으로 (웹뷰는 웹의 화면 돌리기 기능을 지원하지 않아 앱에서 처리)
+                web.evaluateJavascript(
+                    "(function(){var v=document.getElementById('remoteVideo');return !v||!v.videoWidth||v.videoWidth>=v.videoHeight;})()"
+                ) { r ->
+                    if (fullscreenView != null) requestedOrientation =
+                        if (r == "true") ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                }
             }
             override fun onHideCustomView() {
                 fullscreenView?.let { root.removeView(it) }
@@ -96,6 +105,7 @@ class ViewerActivity : Activity() {
                 fullscreenCallback = null
                 @Suppress("DEPRECATION")
                 window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
         }
         web.loadUrl(getString(R.string.app_url))
